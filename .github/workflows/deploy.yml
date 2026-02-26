@@ -1,0 +1,44 @@
+name: Deploy to AWS Lambda
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with Cargo Lambda
+        uses: moonrepo/setup-rust@v1
+        with:
+          bins: cargo-lambda
+          cache-target: release
+
+      - name: Install Zig toolchain
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.14.0
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-north-1
+
+      - name: Build Lambda
+        run: >
+          export SQLX_OFFLINE=true &&
+          cargo lambda build --release
+
+      - name: Deploy Lambda
+        run: >
+          cargo lambda deploy scraper
+          --iam-role ${{ vars.AWS_ROLE_ARN }}
+          --env-var DATABASE_URL=${{ secrets.DATABASE_URL }}
+          --env-var PHYTECH_EMAIL=${{ secrets.PHYTECH_EMAIL }}
+          --env-var PHYTECH_PASSWORD=${{ secrets.PHYTECH_PASSWORD }}

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO scrapes DEFAULT VALUES",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "cf69acaf9744ca50e9303b21f37864839a6b60dfc660a88e59f5a1fce8576dd6"
+}
