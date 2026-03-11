@@ -42,6 +42,19 @@ pub struct MeasurementSource {
     pub depth_unit: Option<String>,
 }
 
+fn get_scale_factor(category: &str, unit: Option<&str>) -> Option<f64> {
+    match (category.to_uppercase().as_str(), unit) {
+        ("CLIMATE", Some("C")) => Some(0.1),
+        ("CLIMATE", Some("%")) => Some(0.1),
+        ("PLANT", _) => Some(1.0),
+        ("SOIL", Some("%")) => Some(0.05),
+        ("SOIL", Some("C")) => Some(0.1),
+        ("SOIL", Some("cBar")) => Some(0.1),
+        ("IRRIGATION", Some("kPa")) => Some(2.0),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct MeasurementResponse {
     pub measurements: Option<Vec<Measurement>>,
@@ -363,13 +376,26 @@ async fn scrape_sensor(
     );
 
     // Batch insert using sqlx::QueryBuilder mapping up to 10k parameters (~3k rows per insert)
+    let scale_factor = match get_scale_factor(&source.category, source.measurement_unit.as_deref()) {
+        Some(f) => f,
+        None => {
+            error!(
+                sensor_id,
+                category = %source.category,
+                unit = ?source.measurement_unit,
+                "Unknown category and unit combination for sensor"
+            );
+            return Ok(());
+        }
+    };
+
     for chunk in new_measurements.chunks(1000) {
         let mut query_builder: QueryBuilder<'_, sqlx::Postgres> =
             QueryBuilder::new("INSERT INTO measurements (sensor_id, value, measured_at) ");
 
         query_builder.push_values(chunk, |mut b, m| {
             b.push_bind(&internal_sensor_id)
-                .push_bind(m.value)
+                .push_bind(m.value * scale_factor)
                 .push_bind(m.time);
         });
 
