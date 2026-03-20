@@ -1,10 +1,13 @@
 use anyhow::Context;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, TimeZone, Utc};
 use futures::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use serde::de::Error;
 use sqlx::{PgPool, QueryBuilder};
 use tokio::time::{Duration, sleep};
 use tracing::{error, info, warn};
+
+const ISRAEL_STANDARD_TIMEZONE: FixedOffset = FixedOffset::east_opt(2 * 3600).unwrap();
 
 // ── Plot / Project discovery types ──────────────────────────────────────────
 
@@ -63,8 +66,17 @@ pub struct MeasurementResponse {
 #[derive(Debug, Deserialize)]
 pub struct Measurement {
     pub value: f64,
-    #[serde(with = "chrono::serde::ts_milliseconds")]
+    #[serde(deserialize_with = "deserialize_israel_standard_time_milliseconds")]
     pub time: DateTime<Utc>,
+}
+
+fn deserialize_israel_standard_time_milliseconds<'de, D: Deserializer<'de>>(d: D) -> Result<DateTime<Utc>, D::Error> {
+    let milliseconds: i64 = Deserialize::deserialize(d)?;
+    let naive_time = DateTime::from_timestamp_millis(milliseconds)
+        .ok_or(D::Error::custom("Invalid timestamp"))?
+        .naive_utc();
+    let ist_time: DateTime<FixedOffset> = ISRAEL_STANDARD_TIMEZONE.from_local_datetime(&naive_time).unwrap();
+    Ok(ist_time.with_timezone(&Utc))
 }
 
 #[derive(Debug, Deserialize)]
