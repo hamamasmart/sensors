@@ -4,9 +4,12 @@
 //! scaling, and pushes sensors + measurements to the `server` crate over HTTP. All DB
 //! writes happen there.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use anyhow::Context;
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
 use futures::StreamExt;
+use reqwest::{StatusCode, header};
 use serde::{Deserialize, Deserializer};
 use serde::de::Error;
 use tokio::time::{Duration, sleep};
@@ -17,6 +20,18 @@ use api_types::{
 };
 
 const ISRAEL_STANDARD_TIMEZONE: FixedOffset = FixedOffset::east_opt(2 * 3600).unwrap();
+
+/// Per-project sensor concurrency. The server is a single 256 MB Lambda behind a
+/// Function URL; fanning out wider than this overwhelms its burst concurrency and
+/// produces 429s. `send_with_retry` absorbs residual bursts.
+const MAX_CONCURRENT_SENSORS: usize = 5;
+
+/// Maximum attempts (initial + retries) for a single server-facing request.
+const SERVER_MAX_ATTEMPTS: u32 = 5;
+
+/// Monotonic counter used to spread concurrent retries so they don't back off in
+/// lockstep. Avoids pulling in a `rand` dependency.
+static RETRY_JITTER_SEED: AtomicU64 = AtomicU64::new(0);
 
 // ── Plot / Project discovery types ──────────────────────────────────────────
 
@@ -187,6 +202,9 @@ pub async fn run_scrape(
     password: &str,
     server_auth_token: &str,
 ) -> anyhow::Result<()> {
+    // Lambda Function URLs end in '/', which would yield '…//sensors' below.
+    let server_url = server_url.trim_end_matches('/');
+
     let mut server_headers = reqwest::header::HeaderMap::new();
     server_headers.insert(
         reqwest::header::AUTHORIZATION,
@@ -286,7 +304,7 @@ async fn scrape_project(
         "Found RAW sensor sources"
     );
 
-    // Process up to 10 sensors concurrently
+    // Process sensors concurrently, capped to avoid overwhelming the server Lambda.
     let fetches = futures::stream::iter(raw_sources.into_iter().map(|source| {
         let sensor_id = source.sensor_id.clone().unwrap();
         let base_url = url.clone();
@@ -299,7 +317,7 @@ async fn scrape_project(
             }
         }
     }))
-    .buffer_unordered(10);
+    .buffer_unordered(MAX_CONCURRENT_SENSORS);
 
     fetches.collect::<Vec<()>>().await;
 
@@ -340,15 +358,61 @@ async fn fetch_measurements_with_retry(
     }
 }
 
+/// Sends a server-facing request, retrying transient failures (429 Too Many
+/// Requests and 5xx) with exponential backoff + jitter. The closure rebuilds the
+/// `RequestBuilder` each attempt so the body can be re-sent. Non-retryable 4xx
+/// responses surface via `error_for_status`, preserving reqwest's usual error shape.
+async fn send_with_retry(
+    build: impl Fn() -> reqwest::RequestBuilder,
+) -> anyhow::Result<reqwest::Response> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let resp = build().send().await.context("Failed to send server request")?;
+        let status = resp.status();
+        let retryable =
+            status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
+        if retryable && attempt < SERVER_MAX_ATTEMPTS {
+            let delay = backoff_delay(attempt, resp.headers().get(header::RETRY_AFTER));
+            // Drain the body so the connection can be reused by the next attempt.
+            let _ = resp.bytes().await;
+            warn!(
+                attempt,
+                status = status.as_u16(),
+                delay_ms = delay.as_millis() as u64,
+                "Server returned retryable status, backing off"
+            );
+            sleep(delay).await;
+            continue;
+        }
+        return resp
+            .error_for_status()
+            .context("Server rejected request");
+    }
+}
+
+/// Exponential backoff: 500ms, 1s, 2s, 4s, … plus 0–250ms jitter. Honors the
+/// `Retry-After` header (seconds form) when the server provides it.
+fn backoff_delay(attempt: u32, retry_after: Option<&reqwest::header::HeaderValue>) -> Duration {
+    if let Some(header) = retry_after
+        && let Ok(s) = header.to_str()
+        && let Ok(secs) = s.trim().parse::<u64>()
+    {
+        return Duration::from_secs(secs);
+    }
+    let base_ms = 500u64 * 2u64.pow(attempt - 1);
+    let jitter = RETRY_JITTER_SEED.fetch_add(1, Ordering::Relaxed) % 250;
+    Duration::from_millis(base_ms + jitter)
+}
+
 async fn upsert_sensor(
     server_client: &reqwest::Client,
     server_url: &str,
     source: &MeasurementSource,
     sensor_id: &str,
 ) -> anyhow::Result<UpsertSensorResponse> {
-    let resp = server_client
-        .post(format!("{}/sensors", server_url))
-        .json(&UpsertSensorRequest {
+    let resp = send_with_retry(|| {
+        server_client.post(format!("{}/sensors", server_url)).json(&UpsertSensorRequest {
             external_id: sensor_id.to_string(),
             provider: "phytech".to_string(),
             category: source.category.clone(),
@@ -356,14 +420,12 @@ async fn upsert_sensor(
             depth_value: source.depth_value,
             depth_unit: source.depth_unit.clone(),
         })
-        .send()
-        .await
-        .context("Failed to upsert sensor")?
-        .error_for_status()
-        .context("Server rejected sensor upsert")?
-        .json::<UpsertSensorResponse>()
-        .await
-        .context("Failed to parse sensor upsert response")?;
+    })
+    .await
+    .context("Server rejected sensor upsert")?
+    .json::<UpsertSensorResponse>()
+    .await
+    .context("Failed to parse sensor upsert response")?;
     Ok(resp)
 }
 
@@ -444,16 +506,13 @@ async fn scrape_sensor(
 
     let insert_url = format!("{}/sensors/{}/measurements", server_url, internal_sensor_id);
     for chunk in new_measurements.chunks(1000) {
-        let response = server_client
-            .post(&insert_url)
-            .json(&InsertMeasurementsRequest {
+        let response = send_with_retry(|| {
+            server_client.post(&insert_url).json(&InsertMeasurementsRequest {
                 measurements: chunk.to_vec(),
             })
-            .send()
-            .await
-            .context("Failed to insert measurements")?
-            .error_for_status()
-            .context("Server rejected measurements insert")?;
+        })
+        .await
+        .context("Server rejected measurements insert")?;
         // Drain the body so the connection can be reused.
         let _ = response.bytes().await;
     }
