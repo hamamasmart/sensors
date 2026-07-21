@@ -1,0 +1,83 @@
+# AWS SAM template for the hamama stack.
+#
+# Defines the entire Lambda deployment that used to be done with manual steps:
+#   - server  : HTTP function (lambda_http) fronted by a Lambda Function URL
+#               (AuthType NONE). Owns the DB connection and runs migrations.
+#   - scraper  : event-driven function (lambda_runtime) triggered on a schedule.
+#
+# Wiring that was previously manual is now expressed in-template:
+#   - the server's Function URL (was `aws lambda create-function-url-config`),
+#   - the EventBridge schedule that triggers the scraper (was a hand-made cron),
+#   - the execution roles for both functions,
+#   - SERVER_URL, taken straight from the server's Function URL via !GetAtt so
+#     nothing has to be copied into a repo variable by hand.
+#
+# Note on auth: the Function URL is AuthType NONE (public), but every server
+# route is guarded by a shared bearer token (AUTH_TOKEN) that the scraper also
+# sends, so the endpoint is never actually unauthenticated at the app layer.
+
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  DatabaseUrl:
+    Type: String
+    Description: Postgres connection string used by the server Lambda.
+    NoEcho: true
+  AuthToken:
+    Type: String
+    Description: Shared bearer token the scraper presents to the server.
+    NoEcho: true
+  PhytechEmail:
+    Type: String
+    Description: Phytech account email used by the scraper.
+  PhytechPassword:
+    Type: String
+    Description: Phytech account password used by the scraper.
+    NoEcho: true
+
+Resources:
+  ServerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: server
+      CodeUri: target/lambda/server
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 30
+      Environment:
+        Variables:
+          DATABASE_URL: !Ref DatabaseUrl
+          AUTH_TOKEN: !Ref AuthToken
+      FunctionUrlConfig:
+        AuthType: NONE
+
+  ScraperFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: scraper
+      CodeUri: target/lambda/scraper
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      MemorySize: 512
+      Timeout: 300
+      Environment:
+        Variables:
+          SERVER_URL: !GetAtt ServerFunctionUrl.FunctionUrl
+          AUTH_TOKEN: !Ref AuthToken
+          PHYTECH_EMAIL: !Ref PhytechEmail
+          PHYTECH_PASSWORD: !Ref PhytechPassword
+      Events:
+        ScrapeSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 hour)
+            Name: phytech-scraper-schedule
+            Enabled: true
+
+Outputs:
+  ServerFunctionUrl:
+    Description: HTTPS endpoint of the server Lambda (called by the scraper).
+    Value: !GetAtt ServerFunctionUrl.FunctionUrl

@@ -1,2 +1,5 @@
 [env]
+# Server crate: sqlx compile-time queries validate against this DB on local builds.
 DATABASE_URL="postgres://postgres:postgres@localhost:5432/postgres"
+# Scraper crate: where the scraper pushes data locally (the server's dual-mode addr).
+SERVER_URL="http://localhost:8080"
