@@ -68,6 +68,7 @@ jobs:
             --s3-prefix hamama \
             --no-confirm-changeset \
             --no-disable-rollback \
+            --no-fail-on-empty-changeset \
             --parameter-overrides \
               DatabaseUrl="${DATABASE_URL}" \
               AuthToken="${AUTH_TOKEN}" \
