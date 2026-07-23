@@ -1,23 +1,38 @@
 //! HTTP route handlers. All DB writes live here so the scraper can stay DB-less.
 
+use axum::body::Body;
+use axum::extract::Query;
 use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
 };
 use chrono::{DateTime, Utc};
+use futures::TryStreamExt;
+use s3::Bucket;
 use sqlx::{PgPool, QueryBuilder};
 use uuid::Uuid;
 
 use api_types::{
-    InsertMeasurementsRequest, InsertMeasurementsResponse, UpsertSensorRequest,
-    UpsertSensorResponse,
+    InsertMeasurementsRequest, InsertMeasurementsResponse, UploadCameraImageQuery,
+    UploadCameraImageResponse, UpsertSensorRequest, UpsertSensorResponse,
 };
 
-type ApiError = (StatusCode, String);
+/// Shared state handed to every handler via axum's `State` extractor.
+#[derive(Clone)]
+pub struct AppState {
+    pub pool: PgPool,
+    pub s3: Bucket,
+}
 
-fn err<E: std::fmt::Display>(e: E) -> ApiError {
+pub(crate) type ApiError = (StatusCode, String);
+
+pub(crate) fn err<E: std::fmt::Display>(e: E) -> ApiError {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+pub(crate) fn bad_request<E: std::fmt::Display>(e: E) -> ApiError {
+    (StatusCode::BAD_REQUEST, e.to_string())
 }
 
 /// `POST /sensors` — upsert a sensor and return its internal id plus the latest
@@ -26,9 +41,10 @@ fn err<E: std::fmt::Display>(e: E) -> ApiError {
 /// The SQL here is copied verbatim from the previous scraper so the committed
 /// `.sqlx` offline cache still matches — do not change the whitespace.
 pub async fn upsert_sensor(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Json(req): Json<UpsertSensorRequest>,
 ) -> Result<Json<UpsertSensorResponse>, ApiError> {
+    let pool = state.pool;
     let sensor_id: Uuid = sqlx::query_scalar!(
         r#"
         INSERT INTO sensors (external_id, provider, category, measurement_unit, depth_value, depth_unit)
@@ -71,10 +87,11 @@ pub async fn upsert_sensor(
 
 /// `POST /sensors/:sensor_id/measurements` — batch insert, dedup on conflict.
 pub async fn insert_measurements(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Path(sensor_id): Path<Uuid>,
     Json(body): Json<InsertMeasurementsRequest>,
 ) -> Result<Json<InsertMeasurementsResponse>, ApiError> {
+    let pool = state.pool;
     let mut inserted: u64 = 0;
 
     for chunk in body.measurements.chunks(1000) {
@@ -97,4 +114,47 @@ pub async fn insert_measurements(
     }
 
     Ok(Json(InsertMeasurementsResponse { inserted }))
+}
+
+/// `POST /cameras/images?camera_id=<id>&captured_at=<epoch seconds>` — store a
+/// camera image in S3 as PNG.
+///
+/// Query params:
+///   - `camera_id` — the camera the image came from;
+///   - `captured_at` — when the image was taken, as a Unix epoch timestamp in
+///     seconds.
+///
+/// Multipart body: an `image` file part holding the raw PNG bytes. Only PNG is
+/// accepted; anything else is rejected with `400 Bad Request`.
+///
+/// The request body is streamed straight into S3 via `put_object_stream` — the
+/// handler never holds the whole image in memory.
+/// The object key is `YYYY/MM/DD/HH/<camera_id>/mm_ss.png`,
+/// with every component taken from `captured_at` in UTC.
+pub async fn upload_camera_image(
+    State(state): State<AppState>,
+    Query(q): Query<UploadCameraImageQuery>,
+    body: Body,
+) -> Result<Json<UploadCameraImageResponse>, ApiError> {
+    let captured_at = DateTime::<Utc>::from_timestamp(q.captured_at, 0)
+        .ok_or_else(|| bad_request("`captured_at` is not a valid epoch timestamp"))?;
+    let key = format!(
+        "{}/{}/{}.png",
+        captured_at.format("%Y/%m/%d/%H"),
+        q.camera_id,
+        captured_at.format("%M_%S"),
+    );
+    tracing::info!(camera_id = %q.camera_id, %key, "streaming camera image to S3");
+
+    let stream = body
+        .into_data_stream()
+        .map_err(std::io::Error::other);
+    let mut reader = tokio_util::io::StreamReader::new(stream);
+
+    state.s3.put_object_stream(&mut reader, &key).await.map_err(err)?;
+
+    Ok(Json(UploadCameraImageResponse {
+        bucket: state.s3.name.clone(),
+        key,
+    }))
 }
