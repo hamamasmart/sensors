@@ -15,9 +15,7 @@ name: Release camera-capture (arm64)
 
 on:
   push:
-    # TEMP (revert before PR #8 merges): include the feature branch so the
-    # release build can be exercised without merging to main first.
-    branches: [main, feature/camera-capture-script]
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
