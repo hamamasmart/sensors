@@ -1,0 +1,27 @@
+[package]
+name = "camera-capture"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+# HTTP Basic fallback for snapshot auth — same major as onvif-rs pulls, so the
+# tree keeps a single base64.
+base64 = "0.23"
+chrono = "0.4"
+# Snapshot digest auth — same version onvif-rs uses.
+digest_auth = "0.3"
+dotenvy = "0.15"
+onvif = { git = "https://github.com/lumeohq/onvif-rs" }
+# We deliberately do NOT enable onvif's `tls` feature: the cameras are plain
+# HTTP on the LAN. `schema` must be a direct dep (onvif does not re-export it).
+schema = { git = "https://github.com/lumeohq/onvif-rs", features = ["devicemgmt", "media", "ptz"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
+toml = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# rustls (not native-tls) so this runs on a Raspberry Pi with no system OpenSSL;
+# it still reaches the cloud `server` over HTTPS. Mirrors the `scraper` crate.
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+url = "2"

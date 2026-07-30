@@ -1,0 +1,23 @@
+# Example configuration for the camera-capture loop.
+
+# Seconds between full passes over every camera.
+interval_secs = 300
+
+# Base URL of the cloud `server` (the crate that owns POST /cameras/images).
+# The `/cameras/images` path is appended automatically.
+server_url = "https://<your-server>.lambda-url.us-east-1.on.aws"
+auth_token = "shared-secret-bearer-token"
+
+# Each camera is a PTZ device on the LAN, reached over plain HTTP.
+[[cameras]]
+uri = "http://192.168.0.226:8080" # device host root
+username = "admin"
+password = "admin"
+fix_time = true # set true if the camera's clock is skewed
+settle_secs = 10.0 # wait after a PTZ move before snapshotting
+  [[cameras.locations]]
+  camera_id = "yard-north"
+  pan = 0.0
+  tilt = 0.0
+  zoom = 0.5
+

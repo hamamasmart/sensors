@@ -1,0 +1,106 @@
+name: Release camera-capture (arm64)
+
+# Cross-compiles the `camera-capture` binary for aarch64 Linux (Raspberry Pi)
+# and publishes it as a GitHub Release artifact.
+#
+# Builds are prereleases:
+#   - automatically on every merge to `main`, and
+#   - on demand from the Actions tab (optionally with a custom version).
+#
+# The aarch64 cross-build uses the same Zig-backed toolchain as
+# `deploy.yml` (cargo-lambda uses cargo-zigbuild under the hood): Zig's `cc`
+# cross-compiles the C bits — notably `aws-lc-rs` pulled in by reqwest's
+# `rustls` feature — without a system cross-toolchain, and pins glibc 2.28 so
+# the binary runs on current Raspberry Pi OS releases.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Override the release version (defaults to the crate version from Cargo.toml)"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark as a prerelease"
+        required: false
+        type: boolean
+        default: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    # Don't run automatically for dependabot/renovate bots on main pushes —
+    # those should be vetted first. Manual dispatch still works.
+    if: github.event_name == 'workflow_dispatch' || github.actor != 'dependabot[bot]'
+    permissions:
+      contents: write # needed to create the release + tag
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain with aarch64 target
+        uses: moonrepo/setup-rust@v1
+        with:
+          targets: aarch64-unknown-linux-gnu
+          cache-target: release
+
+      - name: Install Zig toolchain
+        uses: mlugg/setup-zig@v2
+        # cargo-zigbuild pins Zig via its own requirement; mlugg/action installs
+        # a recent stable Zig that satisfies it.
+
+      - name: Install cargo-zigbuild
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      - name: Determine release version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            # Read the crate version straight from Cargo.toml.
+            ver=$(awk -F'"' '/^version = / {print $2; exit}' crates/camera-capture/Cargo.toml)
+            # Suffix every automated/merge build with the run number so repeated
+            # prereleases of the same crate version get distinct, monotonic tags.
+            echo "version=${ver}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build aarch64 release binary
+        run: cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.28 -p camera-capture
+
+      - name: Stage release artifact
+        run: |
+          set -euo pipefail
+          staging="camera-capture-${{ steps.ver.outputs.version }}-aarch64"
+          mkdir -p "$staging"
+          cp target/aarch64-unknown-linux-gnu/release/camera-capture "$staging/camera-capture"
+          cp crates/camera-capture/cameras.example.toml "$staging/cameras.example.toml"
+          # A short pointer so a downloaded tarball is self-describing. Built
+          # with printf (not a heredoc) so YAML's block-scalar indentation can't
+          # swallow the delimiter.
+          {
+            printf '%s\n' 'camera-capture (aarch64) — ONVIF PTZ camera capture loop.'
+            printf '%s\n' ''
+            printf '%s\n' '• camera-capture        — the binary (run on the Raspberry Pi)'
+            printf '%s\n' '• cameras.example.toml  — copy to cameras.toml and edit, or set'
+            printf '%s\n' '                          CAMERA_CONFIG to point at your own.'
+            printf '%s\n' ''
+            printf '%s\n' 'Run: ./camera-capture  (reads cameras.toml in the cwd)'
+          } > "$staging/README.txt"
+          tar -caf "${staging}.tar.gz" "$staging"
+          echo "artifact=${staging}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: camera-capture-v${{ steps.ver.outputs.version }}
+          name: camera-capture v${{ steps.ver.outputs.version }}
+          prerelease: ${{ inputs.prerelease || true }}
+          generate_release_notes: true
+          files: ${{ env.artifact }}
