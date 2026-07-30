@@ -14,7 +14,7 @@
 set -euo pipefail
 
 PI="pi@${PI_HOST}"
-BIN=target/aarch64-unknown-linux-gnu/release/camera-capture
+BIN=target/release/camera-capture
 UNIT=crates/camera-capture/camera-capture.service
 CFG=cameras.toml
 

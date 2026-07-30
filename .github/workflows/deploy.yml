@@ -47,7 +47,7 @@ jobs:
       - name: Build Lambda artifacts
         env:
           SQLX_OFFLINE: "true"
-        run: cargo lambda build --release --arm64
+        run: cargo lambda build --release --arm64 -p server -p scraper
 
       - name: Deploy (sam deploy)
         # Secrets are passed through env vars rather than interpolated into the

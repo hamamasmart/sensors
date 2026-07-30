@@ -1,20 +1,27 @@
 name: Deploy camera-capture (arm64)
 
-# Cross-compiles the `camera-capture` binary for aarch64 Linux (Raspberry Pi)
-# and deploys it directly to the Pi over Tailscale — no GitHub Release is
-# produced.
+# Builds the `camera-capture` binary for aarch64 Linux (Raspberry Pi) and
+# deploys it directly to the Pi over Tailscale — no GitHub Release is produced.
 #
 # On every merge to `main` that touches `crates/camera-capture/**` (or this
 # workflow), and on demand from the Actions tab:
-#   1. build the aarch64 release binary (same Zig-backed toolchain as the
-#      AWS Lambda builds — cargo-zigbuild pins glibc 2.28 so the binary runs
-#      on current Raspberry Pi OS releases),
+#   1. build the aarch64 release binary natively on a GitHub-hosted ARM runner,
 #   2. generate cameras.toml from secrets + the deployed server's Function
 #      URL (server_url from the hamama stack output, auth_token from
 #      AUTH_TOKEN, the rest from CAMERAS_CONFIG_TOML),
 #   3. join the ephemeral runner to the tailnet with a Tailscale auth key,
 #   4. scp the binary + systemd unit + generated config to the Pi, install,
 #      and restart the service.
+#
+# We build on a native aarch64 runner (ubuntu-24.04-arm) rather than cross-
+# compiling from x86. camera-capture depends on ffmpeg-next with the `build`
+# feature, which builds ffmpeg from source via ffmpeg-sys-next; its configure
+# script derives a `--cross-prefix` from the C compiler's filename, which is
+# incompatible with cargo-zigbuild's PID-suffixed wrapper names (ffmpeg ends
+# up invoking a `...-gcc` binary that doesn't exist). A native ARM build
+# sidesteps the entire cross-toolchain. The Pi runs Debian 13 (glibc 2.40);
+# ubuntu-24.04-arm's glibc 2.39 is older, so the binary runs there fine
+# (newer glibc runs binaries built against an older one).
 #
 # The Pi is reached at its Tailscale IP. CI authenticates with a dedicated
 # deploy SSH key (PI_SSH_KEY) installed in the pi user's authorized_keys,
@@ -36,7 +43,7 @@ env:
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     # Don't run automatically for dependabot/renovate bots on main pushes —
     # those should be vetted first. Manual dispatch still works.
     if: github.event_name == 'workflow_dispatch' || github.actor != 'dependabot[bot]'
@@ -46,28 +53,17 @@ jobs:
       - uses: actions/checkout@v7
 
       # ffmpeg-next builds ffmpeg from source (the `build` feature); its
-      # configure step probes for nasm even when cross-compiling to aarch64.
+      # configure step probes for nasm even on a native aarch64 build.
       - name: Install ffmpeg build deps
         run: sudo apt-get update && sudo apt-get install -y nasm
 
-      - name: Install Rust toolchain with aarch64 target
+      - name: Install Rust toolchain
         uses: moonrepo/setup-rust@v1
         with:
-          targets: aarch64-unknown-linux-gnu
           cache-target: release
 
-      - name: Install Zig toolchain
-        uses: mlugg/setup-zig@v2
-        # cargo-zigbuild pins Zig via its own requirement; mlugg/action installs
-        # a recent stable Zig that satisfies it.
-
-      - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-zigbuild
-
       - name: Build aarch64 release binary
-        run: cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.28 -p camera-capture
+        run: cargo build --release -p camera-capture
 
       - name: Configure AWS Credentials
         # Needed to read the deployed server Lambda's Function URL from the
