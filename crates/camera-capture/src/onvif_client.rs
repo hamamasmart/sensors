@@ -72,16 +72,23 @@ impl CameraClients {
         Ok(())
     }
 
-    /// Ask the media service for the still-snapshot URI for this profile.
-    pub async fn snapshot_uri(&self) -> anyhow::Result<String> {
-        let resp = schema::media::get_snapshot_uri(
+    /// Ask the media service for the RTSP stream URI for this profile.
+    pub async fn stream_uri(&self) -> anyhow::Result<String> {
+        let resp = schema::media::get_stream_uri(
             &self.media,
-            &schema::media::GetSnapshotUri {
+            &schema::media::GetStreamUri {
                 profile_token: ReferenceToken(self.profile_token.clone()),
+                stream_setup: schema::onvif::StreamSetup {
+                    stream: schema::onvif::StreamType::RtpUnicast,
+                    transport: schema::onvif::Transport {
+                        protocol: schema::onvif::TransportProtocol::Tcp,
+                        tunnel: Vec::new(),
+                    },
+                },
             },
         )
         .await
-        .context("GetSnapshotUri failed")?;
+        .context("GetStreamUri failed")?;
         Ok(resp.media_uri.uri)
     }
 }

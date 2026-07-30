@@ -45,6 +45,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # ffmpeg-next builds ffmpeg from source (the `build` feature); its
+      # configure step probes for nasm even when cross-compiling to aarch64.
+      - name: Install ffmpeg build deps
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
       - name: Install Rust toolchain with aarch64 target
         uses: moonrepo/setup-rust@v1
         with:
