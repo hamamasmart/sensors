@@ -43,3 +43,19 @@ pub struct InsertMeasurementsRequest {
 pub struct InsertMeasurementsResponse {
     pub inserted: u64,
 }
+
+
+/// `POST /cameras/images` request query parms.
+#[derive(Deserialize)]
+pub struct UploadCameraImageQuery {
+    pub camera_id: String,
+    /// When the image was taken, as a Unix epoch timestamp in seconds.
+    pub captured_at: i64,
+}
+
+/// `POST /cameras/images` response — where the uploaded image landed.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UploadCameraImageResponse {
+    pub bucket: String,
+    pub key: String,
+}

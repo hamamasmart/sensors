@@ -1,0 +1,63 @@
+name: CI
+
+# Lint + hygiene checks that must pass before a branch can merge into main.
+# Required status checks for branch protection are keyed off these job names:
+#   clippy, cargo-sort, cargo-machete.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@v1
+        with:
+          cache-target: release
+
+      # sqlx's build-time query check connects to the DB unless told to use the
+      # cached query data checked into the repo. Mirror the deploy build.
+      - name: Clippy (deny warnings)
+        env:
+          SQLX_OFFLINE: "true"
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  cargo-sort:
+    name: cargo-sort
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install cargo-sort
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-sort
+
+      - name: Check Cargo.toml formatting
+        run: cargo sort --check
+
+  cargo-machete:
+    name: cargo-machete
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete
+
+      # --with-metadata resolves renamed crates (e.g. rust-s3 imported as `s3`)
+      # so plain name matching doesn't false-positive on them.
+      - name: Find unused dependencies
+        run: cargo machete --with-metadata

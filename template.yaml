@@ -50,6 +50,18 @@ Resources:
         Variables:
           DATABASE_URL: !Ref DatabaseUrl
           AUTH_TOKEN: !Ref AuthToken
+      Policies:
+        # The bucket name is hardcoded in the server (S3_BUCKET_NAME). The role
+        # needs CreateBucket so the server can create it on first run, plus
+        # PutObject to stream camera images into it.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:CreateBucket
+                - s3:PutObject
+              Resource:
+                - !Sub "arn:aws:s3:::phytech-camera-images"
+                - !Sub "arn:aws:s3:::phytech-camera-images/*"
       FunctionUrlConfig:
         AuthType: NONE
 
