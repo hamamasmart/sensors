@@ -9,8 +9,8 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now camera-capture
 #
-# The binary is the aarch64 release artifact published by
-# `.github/workflows/release-camera-capture.yml`.
+# The binary is the aarch64 release artifact deployed to the Pi by
+# `.github/workflows/deploy-camera-capture.yml`.
 
 [Unit]
 Description=camera-capture ONVIF PTZ capture loop
