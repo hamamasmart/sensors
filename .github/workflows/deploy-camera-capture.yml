@@ -74,36 +74,14 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Generate cameras.toml
-        # Assemble the live config from three sources, none of which lives in
-        # the repo:
-        #   server_url  — the deployed server Lambda Function URL (stack output)
-        #   auth_token  — the AUTH_TOKEN secret (shared with the scraper/server)
-        #   the rest     — the CAMERAS_CONFIG_TOML secret (interval + camera defs)
-        # Top-level keys must precede the [[cameras]] array-of-tables in TOML, so
-        # the two injected keys are prepended. Secrets are passed via env, not
-        # interpolated, so values with shell metacharacters don't break parsing.
+        # Assembles the live config from three sources, none of which lives in
+        # the repo: server_url (deployed server Function URL, read from the
+        # hamama stack output), auth_token (AUTH_TOKEN secret), and the rest
+        # (CAMERAS_CONFIG_TOML secret). See the script header for details.
         env:
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
           CAMERAS_CONFIG_TOML: ${{ secrets.CAMERAS_CONFIG_TOML }}
-        run: |
-          set -euo pipefail
-          server_url="$(aws cloudformation describe-stacks --stack-name hamama \
-            --query "Stacks[0].Outputs[?OutputKey=='ServerFunctionUrl'].OutputValue" \
-            --output text)"
-          # The uploader appends "/cameras/images", so trim the trailing slash
-          # the Function URL ships with.
-          server_url="${server_url%/}"
-          {
-            printf 'server_url = "%s"\n' "$server_url"
-            printf 'auth_token = "%s"\n' "$AUTH_TOKEN"
-            printf '\n'
-            printf '%s\n' "$CAMERAS_CONFIG_TOML"
-          } > cameras.toml
-          # Sanity: refuse to deploy a config missing the injected keys.
-          grep -q '^server_url = ' cameras.toml
-          grep -q '^auth_token = ' cameras.toml
-          echo "--- generated cameras.toml (secrets redacted) ---"
-          sed -E 's/(auth_token = ").*"/\1***"/' cameras.toml
+        run: .github/scripts/generate-cameras-toml.sh
 
       - name: Join tailnet
         uses: tailscale/github-action@v4
@@ -113,37 +91,12 @@ jobs:
           ping: 100.64.132.105
 
       - name: Stage deploy SSH key
-        run: |
-          install -d -m700 ~/.ssh
-          printf '%s\n' "${{ secrets.PI_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          # Ephemeral runner — accept the Pi's host key on first connect.
-          printf '%s\n' 'Host 100.64.132.105' \
-            '  StrictHostKeyChecking accept-new' \
-            '  UserKnownHostsFile ~/.ssh/known_hosts' > ~/.ssh/config
-          chmod 600 ~/.ssh/config
+        env:
+          PI_SSH_KEY: ${{ secrets.PI_SSH_KEY }}
+        run: .github/scripts/stage-deploy-ssh-key.sh
 
       - name: Deploy to Pi
-        run: |
-          set -euo pipefail
-          PI=pi@100.64.132.105
-          BIN=target/aarch64-unknown-linux-gnu/release/camera-capture
-          UNIT=crates/camera-capture/camera-capture.service
-          CFG=cameras.toml
-
-          scp -o StrictHostKeyChecking=accept-new "$BIN" "$UNIT" "$CFG" "$PI":/tmp/
-
-          # Install binary + unit + generated config, reload, restart.
-          # is-active exits non-zero if the service didn't come up → step fails.
-          ssh -o StrictHostKeyChecking=accept-new "$PI" 'sudo -n bash -s' <<'REMOTE'
-            set -e
-            install -m755  /tmp/camera-capture          /opt/camera-capture/camera-capture
-            install -m644  /tmp/camera-capture.service  /etc/systemd/system/camera-capture.service
-            install -m600  /tmp/cameras.toml            /opt/camera-capture/cameras.toml
-            systemctl daemon-reload
-            systemctl restart camera-capture
-            systemctl is-active camera-capture
-          REMOTE
-
-          echo "--- post-deploy journal (last 8 lines) ---"
-          ssh -o StrictHostKeyChecking=accept-new "$PI" 'journalctl -u camera-capture -n 8 --no-pager'
+        # scps the binary + systemd unit + generated cameras.toml to the Pi,
+        # installs them, reloads systemd, and restarts the service. Fails the
+        # step if the service doesn't come up. See the script header.
+        run: .github/scripts/deploy-camera-capture-to-pi.sh
