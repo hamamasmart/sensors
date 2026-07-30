@@ -6,12 +6,14 @@
 # deploy SSH key is staged (stage-deploy-ssh-key.sh), and cameras.toml was
 # generated in the cwd (generate-cameras-toml.sh).
 #
-# The Pi is reached at its Tailscale IP. The pi user has NOPASSWD sudo, so
-# the install/restart runs passwordless. is-active exits non-zero if the
-# service didn't come up → the step fails.
+# The Pi is reached at its Tailscale IP (PI_HOST). The pi user has NOPASSWD
+# sudo, so the install/restart runs passwordless. is-active exits non-zero if
+# the service didn't come up → the step fails.
+#
+# Env: PI_HOST — the Raspberry Pi's Tailscale IP (repo variable).
 set -euo pipefail
 
-PI=pi@100.64.132.105
+PI="pi@${PI_HOST}"
 BIN=target/aarch64-unknown-linux-gnu/release/camera-capture
 UNIT=crates/camera-capture/camera-capture.service
 CFG=cameras.toml

@@ -88,15 +88,18 @@ jobs:
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
           # Fail fast if the runner can't reach the Pi before we try to deploy.
-          ping: 100.64.132.105
+          ping: ${{ vars.PI_HOST }}
 
       - name: Stage deploy SSH key
         env:
           PI_SSH_KEY: ${{ secrets.PI_SSH_KEY }}
+          PI_HOST: ${{ vars.PI_HOST }}
         run: .github/scripts/stage-deploy-ssh-key.sh
 
       - name: Deploy to Pi
         # scps the binary + systemd unit + generated cameras.toml to the Pi,
         # installs them, reloads systemd, and restarts the service. Fails the
         # step if the service doesn't come up. See the script header.
+        env:
+          PI_HOST: ${{ vars.PI_HOST }}
         run: .github/scripts/deploy-camera-capture-to-pi.sh
