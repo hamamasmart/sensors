@@ -81,6 +81,7 @@ jobs:
           mkdir -p "$staging"
           cp target/aarch64-unknown-linux-gnu/release/camera-capture "$staging/camera-capture"
           cp crates/camera-capture/cameras.example.toml "$staging/cameras.example.toml"
+          cp crates/camera-capture/camera-capture.service "$staging/camera-capture.service"
           # A short pointer so a downloaded tarball is self-describing. Built
           # with printf (not a heredoc) so YAML's block-scalar indentation can't
           # swallow the delimiter.
@@ -90,6 +91,8 @@ jobs:
             printf '%s\n' '• camera-capture        — the binary (run on the Raspberry Pi)'
             printf '%s\n' '• cameras.example.toml  — copy to cameras.toml and edit, or set'
             printf '%s\n' '                          CAMERA_CONFIG to point at your own.'
+            printf '%s\n' '• camera-capture.service — systemd unit; install as a boot service:'
+            printf '%s\n' '                          see the header of the file for the steps.'
             printf '%s\n' ''
             printf '%s\n' 'Run: ./camera-capture  (reads cameras.toml in the cwd)'
           } > "$staging/README.txt"
