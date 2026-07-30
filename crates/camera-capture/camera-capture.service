@@ -1,0 +1,33 @@
+# systemd unit for the `camera-capture` loop running on the Raspberry Pi.
+#
+# Install on the Pi:
+#   sudo install -m644 crates/camera-capture/camera-capture.service \
+#       /etc/systemd/system/camera-capture.service
+#   sudo install -m755 -d /opt/camera-capture
+#   sudo install -m755 <binary>          /opt/camera-capture/camera-capture
+#   sudo install -m600 cameras.toml      /opt/camera-capture/cameras.toml
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now camera-capture
+#
+# The binary is the aarch64 release artifact published by
+# `.github/workflows/release-camera-capture.yml`.
+
+[Unit]
+Description=camera-capture ONVIF PTZ capture loop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/camera-capture
+Environment=CAMERA_CONFIG=/opt/camera-capture/cameras.toml
+Environment=RUST_LOG=info
+ExecStart=/opt/camera-capture/camera-capture
+Restart=on-failure
+RestartSec=10
+# Keep the runtime logs under the standard journal; no log file needed.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

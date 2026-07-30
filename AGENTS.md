@@ -1,1 +1,0 @@
-IMPORTANT: When applicable, prefer using intellij-index MCP tools for code navigation and refactoring.

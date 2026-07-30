@@ -18,6 +18,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "analytics"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "common",
+ "onvif-xsd",
+ "transport",
+ "validate",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -39,6 +55,17 @@ dependencies = [
  "chrono",
  "serde",
  "uuid",
+]
+
+[[package]]
+name = "async-recursion"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7d78656ba01f1b93024b7c3a0467f1608e4be67d725749fdcd7d2c7678fd7a2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -95,7 +122,7 @@ version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16e2cdb6d5ed835199484bb92bb8b3edd526effe995c61732580439c1a67e2e9"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "http",
  "log",
  "rustls",
@@ -165,7 +192,7 @@ version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d02c123e89527e7b424f74f52d11be0d17ef2887819323a42dcae1c7630ca53d"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "http",
  "http-body",
@@ -229,10 +256,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "b_2"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "t_1",
+ "validate",
+ "ws_addr",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
+name = "base64"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
+name = "base64"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b25655df2c3cdd83c5e5b293b88acd880332b2ddadd7c30ac43144fdc0033da9"
+
+[[package]]
+name = "bigdecimal"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6773ddc0eafc0e509fb60e48dff7f450f8e674a0686ae8605e8d9901bd5eefa"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+]
 
 [[package]]
 name = "bitflags"
@@ -280,6 +345,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "camera-capture"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.0",
+ "chrono",
+ "digest_auth",
+ "dotenvy",
+ "onvif",
+ "reqwest 0.13.2",
+ "schema",
+ "serde",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -360,6 +445,19 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "common"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "validate",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
 ]
 
 [[package]]
@@ -499,6 +597,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "devicemgmt"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "common",
+ "onvif-xsd",
+ "transport",
+ "validate",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -518,6 +632,19 @@ dependencies = [
  "block-buffer 0.12.1",
  "crypto-common 0.2.2",
  "ctutils",
+]
+
+[[package]]
+name = "digest_auth"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3054f4e81d395e50822796c5e99ca522e6ba7be98947d6d4b0e5e61640bdb894"
+dependencies = [
+ "digest 0.10.7",
+ "hex",
+ "md-5 0.10.6",
+ "rand 0.8.7",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -584,6 +711,23 @@ checksum = "de48cc4d1c1d97a20fd819def54b890cadde72ed3ad0c614822a0a433361be96"
 dependencies = [
  "cfg-if",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "event"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "b_2",
+ "t_1",
+ "transport",
+ "validate",
+ "ws_addr",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
 ]
 
 [[package]]
@@ -811,6 +955,15 @@ dependencies = [
 
 [[package]]
 name = "heck"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d621efb26863f0e9924c6ac577e8275e5e6b77455db64ffa6c65c904e9e132c"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
@@ -966,7 +1119,7 @@ version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-channel",
  "futures-util",
@@ -1215,7 +1368,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "484647f147899f866a7b5db6aaa1671e943f89f4be76e2a383c96b1b27058294"
 dependencies = [
  "async-stream",
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures",
  "http",
@@ -1329,6 +1482,16 @@ dependencies = [
 
 [[package]]
 name = "md-5"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+dependencies = [
+ "cfg-if",
+ "digest 0.10.7",
+]
+
+[[package]]
+name = "md-5"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
@@ -1342,6 +1505,22 @@ name = "md5"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
+
+[[package]]
+name = "media"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "common",
+ "onvif-xsd",
+ "transport",
+ "validate",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
 
 [[package]]
 name = "memchr"
@@ -1384,6 +1563,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "nonzero_ext"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
+
+[[package]]
 name = "ntapi"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1402,10 +1587,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
+
+[[package]]
+name = "num-integer"
+version = "0.1.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "num-traits"
@@ -1440,6 +1644,57 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+
+[[package]]
+name = "onvif"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "async-recursion",
+ "async-trait",
+ "base64 0.13.1",
+ "bigdecimal",
+ "chrono",
+ "digest_auth",
+ "futures",
+ "futures-core",
+ "futures-util",
+ "nonzero_ext",
+ "num-bigint",
+ "reqwest 0.12.28",
+ "schema",
+ "sha1 0.6.1",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "url",
+ "uuid",
+ "xml-rs",
+ "xmltree",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
+name = "onvif-xsd"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "b_2",
+ "common",
+ "soap_envelope",
+ "validate",
+ "xml-rs",
+ "xmlmime",
+ "xop",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
 
 [[package]]
 name = "openssl-probe"
@@ -1564,6 +1819,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ptz"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "common",
+ "onvif-xsd",
+ "transport",
+ "validate",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
 name = "query_map"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1663,11 +1934,22 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
+dependencies = [
+ "libc",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
 dependencies = [
- "rand_chacha",
+ "rand_chacha 0.9.0",
  "rand_core 0.9.5",
 ]
 
@@ -1684,12 +1966,31 @@ dependencies = [
 
 [[package]]
 name = "rand_chacha"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand_chacha"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
 dependencies = [
  "ppv-lite86",
  "rand_core 0.9.5",
+]
+
+[[package]]
+name = "rand_core"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+dependencies = [
+ "getrandom 0.2.17",
 ]
 
 [[package]]
@@ -1739,7 +2040,7 @@ version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-core",
  "futures-util",
@@ -1780,7 +2081,7 @@ version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab3f43e3283ab1488b624b44b0e988d0acea0b3214e694730a055cb6b2efa801"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-core",
  "http",
@@ -1844,7 +2145,7 @@ dependencies = [
  "async-trait",
  "aws-creds",
  "aws-region",
- "base64",
+ "base64 0.22.1",
  "bytes",
  "cfg-if",
  "futures-util",
@@ -1983,6 +2284,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "schema"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "analytics",
+ "b_2",
+ "bigdecimal",
+ "chrono",
+ "common",
+ "devicemgmt",
+ "event",
+ "media",
+ "num-bigint",
+ "onvif-xsd",
+ "percent-encoding",
+ "ptz",
+ "soap_envelope",
+ "t_1",
+ "transport",
+ "types",
+ "url",
+ "validate",
+ "ws_addr",
+ "ws_discovery",
+ "xml-rs",
+ "xml_xsd",
+ "xmlmime",
+ "xop",
+ "xsd-macro-utils",
+ "xsd-types",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2084,6 +2418,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2117,6 +2460,15 @@ dependencies = [
 
 [[package]]
 name = "sha1"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1da05c97445caa12d05e848c4a4fcbbea29e748ac28f7e80e9b010392063770"
+dependencies = [
+ "sha1_smol",
+]
+
+[[package]]
+name = "sha1"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
@@ -2125,6 +2477,12 @@ dependencies = [
  "cpufeatures 0.3.0",
  "digest 0.11.3",
 ]
+
+[[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"
@@ -2179,6 +2537,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "soap_envelope"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "validate",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
 name = "socket2"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2216,7 +2587,7 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05b44e85bf579a8eeb4ceaa77a3a523baf2bf0e9bac7e40f405d537b5d2d5ccb"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "cfg-if",
  "chrono",
@@ -2270,7 +2641,7 @@ dependencies = [
  "cfg-if",
  "dotenvy",
  "either",
- "heck",
+ "heck 0.5.0",
  "hex",
  "proc-macro2",
  "quote",
@@ -2307,7 +2678,7 @@ dependencies = [
  "log",
  "percent-encoding",
  "serde",
- "sha1",
+ "sha1 0.11.0",
  "sha2 0.11.0",
  "sqlx-core",
  "thiserror 2.0.18",
@@ -2322,7 +2693,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "87a2bdd6e83f6b3ea525ca9fee568030508b58355a43d0b2c1674d5f79dcd65e"
 dependencies = [
  "atoi",
- "base64",
+ "base64 0.22.1",
  "bitflags",
  "byteorder",
  "chrono",
@@ -2337,7 +2708,7 @@ dependencies = [
  "hmac 0.13.0",
  "itoa",
  "log",
- "md-5",
+ "md-5 0.11.0",
  "memchr",
  "rand 0.10.2",
  "serde",
@@ -2403,6 +2774,17 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
+version = "1.0.109"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
@@ -2455,6 +2837,19 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-io-kit",
  "windows",
+]
+
+[[package]]
+name = "t_1"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "validate",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
 ]
 
 [[package]]
@@ -2631,6 +3026,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "1.1.4+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3aace63f4bbcdfc2c965b059de67119c89c4017a70d633be6c104910f67056f5"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
+ "winnow",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "1.1.1+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.1.3+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
+dependencies = [
+ "winnow",
+]
+
+[[package]]
+name = "toml_writer"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
+
+[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2752,6 +3186,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "transport"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "async-trait",
+ "thiserror 1.0.69",
+ "yaserde",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2762,6 +3206,19 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "types"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "validate",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
 
 [[package]]
 name = "unicode-bidi"
@@ -2789,6 +3246,12 @@ name = "unicode-properties"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "untrusted"
@@ -2820,10 +3283,16 @@ version = "1.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a68d3c8f01c0cfa54a75291d83601161799e4a89a39e0929f4b0354d88757a37"
 dependencies = [
+ "getrandom 0.4.3",
  "js-sys",
  "serde_core",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "validate"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
 
 [[package]]
 name = "valuable"
@@ -3395,6 +3864,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
+name = "winnow"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
+
+[[package]]
 name = "wit-bindgen"
 version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3405,6 +3880,127 @@ name = "writeable"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
+
+[[package]]
+name = "ws_addr"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "validate",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
+name = "ws_discovery"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "percent-encoding",
+ "url",
+ "xml-rs",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
+name = "xml-rs"
+version = "0.8.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
+
+[[package]]
+name = "xml_xsd"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "xml-rs",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
+name = "xmlmime"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "validate",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
+name = "xmltree"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7d8a75eaf6557bb84a65ace8609883db44a29951042ada9b393151532e41fcb"
+dependencies = [
+ "xml-rs",
+]
+
+[[package]]
+name = "xop"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "validate",
+ "xml-rs",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
+name = "xsd-macro-utils"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/xsd-parser-rs?rev=7f3d433#7f3d433e4f033b55f057e97c0a30de221dbe3ae1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "xsd-types"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/xsd-parser-rs?rev=7f3d433#7f3d433e4f033b55f057e97c0a30de221dbe3ae1"
+dependencies = [
+ "bigdecimal",
+ "chrono",
+ "num-bigint",
+ "xml-rs",
+ "xsd-macro-utils",
+ "yaserde",
+]
+
+[[package]]
+name = "yaserde"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2776ec5bb20e76d89268e87e1ea66c078b94f55e9771e4d648adda3019f87fc"
+dependencies = [
+ "log",
+ "xml-rs",
+]
+
+[[package]]
+name = "yaserde_derive"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c0b0a4701f203ebaecce4971a6bb8575aa07b617bdc39ddfc6ffeff3a38530d"
+dependencies = [
+ "heck 0.3.3",
+ "log",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+ "xml-rs",
+]
 
 [[package]]
 name = "yoke"
