@@ -11,7 +11,7 @@
 
 mod configuration;
 mod onvif_client;
-mod snapshot;
+mod rtsp_snapshot;
 mod uploader;
 
 use std::time::{Duration, Instant};
@@ -113,11 +113,18 @@ async fn capture_location(
     clients.move_to(&target).await?;
     sleep(settle).await;
 
-    let uri = clients.snapshot_uri().await?;
-    let bytes = snapshot::fetch_snapshot(http, &uri, Some(creds)).await?;
-    // Cameras usually return JPEG; the server stores under a `.png` key, so
-    // re-encode to PNG unless the snapshot is already one.
-    let bytes = snapshot::ensure_png(bytes).context("normalizing snapshot to PNG failed")?;
+    // Build an authenticated RTSP URL for ffmpeg.
+    // ffmpeg expects: rtsp://user:pass@host/path
+    let stream_uri = clients.stream_uri().await?;
+    let rtsp_url = inject_credentials(&stream_uri, &creds.username, &creds.password)?;
+
+    let rtsp_url_clone = rtsp_url.clone();
+    let png = tokio::task::spawn_blocking(move || {
+        rtsp_snapshot::capture_frame_png(&rtsp_url_clone)
+    })
+    .await
+    .context("spawn_blocking failed")?
+    .context("RTSP frame capture failed")?;
 
     let captured_at = Utc::now().timestamp();
     uploader::upload_image(
@@ -126,7 +133,7 @@ async fn capture_location(
         &config.auth_token,
         &loc.camera_id,
         captured_at,
-        bytes,
+        png,
     )
     .await
     .context("upload failed")?;
@@ -137,4 +144,16 @@ async fn capture_location(
         "captured and uploaded image"
     );
     Ok(())
+}
+
+/// Inject `user:pass@` into an RTSP URL so ffmpeg can authenticate.
+fn inject_credentials(url: &str, user: &str, pass: &str) -> anyhow::Result<String> {
+    // rtsp://host:port/path → rtsp://user:pass@host:port/path
+    let parts: Vec<&str> = url.splitn(2, "://").collect();
+    if parts.len() != 2 {
+        anyhow::bail!("invalid RTSP URL: {url}");
+    }
+    let scheme = parts[0];
+    let rest = parts[1];
+    Ok(format!("{scheme}://{user}:{pass}@{rest}"))
 }
