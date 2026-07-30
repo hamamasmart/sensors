@@ -139,10 +139,9 @@ pub async fn upload_camera_image(
     let captured_at = DateTime::<Utc>::from_timestamp(q.captured_at, 0)
         .ok_or_else(|| bad_request("`captured_at` is not a valid epoch timestamp"))?;
     let key = format!(
-        "{}/{}/{}.png",
-        captured_at.format("%Y/%m/%d/%H"),
+        "{}/{}.png",
         q.camera_id,
-        captured_at.format("%M_%S"),
+        captured_at.format("%Y/%m/%d/%H/%M_%S"),
     );
     tracing::info!(camera_id = %q.camera_id, %key, "streaming camera image to S3");
 
