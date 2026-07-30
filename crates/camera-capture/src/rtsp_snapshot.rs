@@ -1,9 +1,13 @@
 //! Capture a single frame from an RTSP stream and return it as PNG bytes.
 //!
-//! We open the stream with `ffmpeg_next`, decode the first video packet,
-//! scale the frame to RGB24, and re-encode it with ffmpeg's PNG codec. The
-//! server stores every snapshot under a `.png` key, so the output is always a
-//! real PNG regardless of what the camera streams (typically H.264).
+//! We open the stream with `ffmpeg_next`, decode the first video packet, and
+//! scale the frame to packed RGB24 via ffmpeg's swscale. The RGB24 pixels are
+//! then encoded to PNG with the `image` crate — ffmpeg is used only for
+//! decoding/scaling, never for PNG encoding, so we don't depend on ffmpeg's
+//! PNG codec being built (the `build` feature's `--disable-autodetect` drops
+//! zlib and therefore the PNG encoder). The server stores every snapshot
+//! under a `.png` key, so the output is always a real PNG regardless of what
+//! the camera streams (typically H.264).
 //!
 //! RTSP runs over TCP with a socket read timeout so a dead/unresponsive camera
 //! fails fast instead of stalling the capture loop.
@@ -11,12 +15,12 @@
 use anyhow::Context;
 use ffmpeg_next as ffmpeg;
 
-use ffmpeg::codec::{Context as CodecContext, Id};
+use ffmpeg::codec::Context as CodecContext;
 use ffmpeg::format::{Pixel, input_with_dictionary};
 use ffmpeg::media::Type;
 use ffmpeg::software::scaling::Context as Scaler;
 use ffmpeg::util::frame::video::Video;
-use ffmpeg::{Dictionary, Packet, Rational};
+use ffmpeg::Dictionary;
 
 /// Upper bound on how long we'll wait for the stream to produce a frame, in
 /// microseconds. Applied as the RTSP socket read timeout (`stimeout`).
@@ -90,32 +94,30 @@ fn scale_and_encode(decoded: &Video, scaler: &mut Option<Scaler>) -> anyhow::Res
     encode_png(&rgb)
 }
 
-/// Encode an RGB24 frame to a complete PNG file's bytes via ffmpeg's PNG codec.
+/// Encode an RGB24 frame to a complete PNG file's bytes via the `image` crate.
+///
+/// ffmpeg's frame data is row-padded: each row starts at `stride(0)` bytes
+/// apart, which can exceed `width * 3`. `image`'s `RgbImage` expects tightly
+/// packed rows, so we copy each row stripping the trailing padding before
+/// handing the buffer to the PNG encoder.
 fn encode_png(rgb: &Video) -> anyhow::Result<Vec<u8>> {
-    let codec = ffmpeg::encoder::find(Id::PNG).context("PNG encoder not available in this ffmpeg build")?;
-    let mut encoder = CodecContext::new_with_codec(codec)
-        .encoder()
-        .video()?;
-    encoder.set_width(rgb.width());
-    encoder.set_height(rgb.height());
-    encoder.set_format(Pixel::RGB24);
-    encoder.set_time_base(Rational(1, 1));
+    let width = rgb.width();
+    let height = rgb.height();
+    let stride = rgb.stride(0);
+    let src = rgb.data(0);
+    let row_bytes = usize::try_from(width).unwrap() * 3;
 
-    let mut encoder = encoder.open().context("failed to open PNG encoder")?;
+    let mut packed = Vec::with_capacity(row_bytes * usize::try_from(height).unwrap());
+    for y in 0..usize::try_from(height).unwrap() {
+        let row_start = y * stride;
+        packed.extend_from_slice(&src[row_start..row_start + row_bytes]);
+    }
 
-    encoder.send_frame(rgb)?;
-    encoder.send_eof()?;
+    let img = image::RgbImage::from_raw(width, height, packed)
+        .context("RGB24 frame dimensions don't match its byte count")?;
 
     let mut out = Vec::new();
-    let mut packet = Packet::empty();
-    while encoder.receive_packet(&mut packet).is_ok() {
-        if let Some(data) = packet.data() {
-            out.extend_from_slice(data);
-        }
-    }
-
-    if out.is_empty() {
-        anyhow::bail!("PNG encoder produced no output");
-    }
+    img.write_with_encoder(image::codecs::png::PngEncoder::new(&mut out))
+        .context("PNG encode failed")?;
     Ok(out)
 }

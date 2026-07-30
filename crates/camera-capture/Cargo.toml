@@ -8,6 +8,7 @@ anyhow = "1"
 chrono = "0.4"
 dotenvy = "0.15"
 ffmpeg-next = { version = "8", features = ["build"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 onvif = { git = "https://github.com/lumeohq/onvif-rs" }
 schema = { git = "https://github.com/lumeohq/onvif-rs", features = ["devicemgmt", "media", "ptz"] }
 serde = { version = "1", features = ["derive"] }
