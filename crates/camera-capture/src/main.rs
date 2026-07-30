@@ -115,6 +115,9 @@ async fn capture_location(
 
     let uri = clients.snapshot_uri().await?;
     let bytes = snapshot::fetch_snapshot(http, &uri, Some(creds)).await?;
+    // Cameras usually return JPEG; the server stores under a `.png` key, so
+    // re-encode to PNG unless the snapshot is already one.
+    let bytes = snapshot::ensure_png(bytes).context("normalizing snapshot to PNG failed")?;
 
     let captured_at = Utc::now().timestamp();
     uploader::upload_image(
