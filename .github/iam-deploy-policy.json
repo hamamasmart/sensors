@@ -97,6 +97,56 @@
       ]
     },
     {
+      "Sid": "IamUsers",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateUser",
+        "iam:GetUser",
+        "iam:DeleteUser",
+        "iam:PutUserPolicy",
+        "iam:GetUserPolicy",
+        "iam:DeleteUserPolicy",
+        "iam:ListUserPolicies",
+        "iam:TagUser",
+        "iam:UntagUser",
+        "iam:ListUserTags"
+      ],
+      "Resource": "arn:aws:iam::<<ACCOUNT_ID>>:user/hamama-*"
+    },
+    {
+      "Sid": "IamAccessKeys",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateAccessKey",
+        "iam:DeleteAccessKey",
+        "iam:ListAccessKeys",
+        "iam:GetAccessKeyLastUsed",
+        "iam:UpdateAccessKey"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "LightsailContainer",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:CreateContainerService",
+        "lightsail:UpdateContainerService",
+        "lightsail:DeleteContainerService",
+        "lightsail:CreateContainerServiceDeployment",
+        "lightsail:CreateContainerServiceRegistryLogin",
+        "lightsail:RegisterContainerImage",
+        "lightsail:DeleteContainerImage",
+        "lightsail:GetContainerServices",
+        "lightsail:GetContainerImages",
+        "lightsail:GetContainerServiceDeployments",
+        "lightsail:GetContainerServicePowers",
+        "lightsail:GetContainerAPIMetadata",
+        "lightsail:GetContainerLog",
+        "lightsail:GetContainerServiceMetricData"
+      ],
+      "Resource": "*"
+    },
+    {
       "Sid": "LambdaFunctions",
       "Effect": "Allow",
       "Action": [

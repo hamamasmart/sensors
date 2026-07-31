@@ -2,7 +2,8 @@ use anyhow::Context;
 
 pub struct Configuration {
     pub database_url: String,
-    /// Bind address for the local (non-Lambda) HTTP mode. Ignored on Lambda.
+    /// Bind address for the HTTP server. The Lightsail load balancer proxies to
+    /// the container on 8080, so the deploy sets this to `0.0.0.0:8080`.
     pub bind_addr: String,
     /// Shared secret that callers must present as `Authorization: Bearer <token>`
     /// to reach any route. Required so routes are never exposed unauthenticated.
