@@ -8,20 +8,15 @@
 #
 # sqlx::migrate!("./migrations") embeds the migrations at compile time, so no
 # migration files are needed in this image. All TLS (Postgres + S3) goes through
-# rustls with webpki-roots baked into the binary, so no system CA store or
-# OpenSSL is required at runtime.
+# rustls with webpki-roots baked into the binary, so no system CA store, OpenSSL,
+# or ca-certificates package is required at runtime — keep the image to base +
+# binary only.
 
 FROM ubuntu:24.04
 
-# ca-certificates is harmless to include and keeps TLS root stores current for
-# any future client that falls back to the system store.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# The prebuilt binary is the only file in the build context (the deploy stages
-# just this file next to the Dockerfile so `docker build` never uploads the rest
-# of the workspace).
+# The prebuilt binary is the only file in the build context (the deploy stage
+# copies just this file next to the Dockerfile so `docker build` never uploads
+# the rest of the workspace).
 COPY server /usr/local/bin/server
 
 ENV BIND_ADDR=0.0.0.0:8080

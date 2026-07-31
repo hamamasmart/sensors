@@ -29,9 +29,12 @@ server_url="${server_url%/}"
   printf '%s\n' "$CAMERAS_CONFIG_TOML"
 } > cameras.toml
 
-# Sanity: refuse to deploy a config missing the injected keys.
-grep -q '^server_url = ' cameras.toml
-grep -q '^auth_token = ' cameras.toml
+# Sanity: refuse to deploy a config missing the injected keys — or whose
+# server_url is empty (e.g. the stack is mid-ROLLBACK and the ServerUrl output
+# is missing, so describe-stacks returned nothing). An empty server_url would
+# ship a dead endpoint to the Pi and only fail at runtime.
+grep -Eq '^server_url = ".+"' cameras.toml
+grep -Eq '^auth_token = ".+"' cameras.toml
 
 echo "--- generated cameras.toml (secrets redacted) ---"
 sed -E 's/(auth_token = ").*"/\1***"/' cameras.toml

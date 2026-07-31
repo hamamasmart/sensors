@@ -17,10 +17,14 @@
 # Lightsail containers can't assume IAM roles, so the server gets long-lived S3
 # credentials as env vars. To avoid a manual IAM step, the template itself
 # provisions a dedicated IAM user (S3UploaderUser) with an inline policy scoped
-# to s3:CreateBucket + s3:PutObject on the camera-images bucket, plus an access
-# key (S3UploaderKey) whose id/secret are wired straight into the container
-# environment. Rotate by bumping S3UploaderKey.Serial — CloudFormation replaces
-# the key and redeploys the server with the new secret. (Secrets Manager would be
+# to s3:CreateBucket + s3:PutObject + s3:AbortMultipartUpload on the
+# camera-images bucket, plus an access key (S3UploaderKey) whose id/secret are
+# wired straight into the container environment. Rotate by bumping
+# S3UploaderKey.Serial — CloudFormation replaces the key and redeploys the
+# server with the new secret. (s3:PutObject covers CreateMultipartUpload /
+# UploadPart / CompleteMultipartUpload on AWS S3, but AbortMultipartUpload is a
+# separate action — rust-s3 aborts a multipart upload when a part fails, so the
+# policy must grant it or orphaned parts accumulate in the bucket.) (Secrets Manager would be
 # the usual guidance, but a Lightsail container can't read it without a static
 # key — same chicken-and-egg — so the CFN-managed access key is the pragmatic
 # fully-automated choice here.)
@@ -83,6 +87,7 @@ Resources:
                 Action:
                   - s3:CreateBucket
                   - s3:PutObject
+                  - s3:AbortMultipartUpload
                 Resource:
                   - !Sub "arn:aws:s3:::hamama-camera-images"
                   - !Sub "arn:aws:s3:::hamama-camera-images/*"
@@ -91,6 +96,10 @@ Resources:
     Type: AWS::IAM::AccessKey
     Properties:
       UserName: !Ref S3UploaderUser
+      # Serial forces CloudFormation to replace the key when this value
+      # changes, which is the rotation mechanism documented in the header
+      # comment. Bump it (1 → 2 → …) to rotate the long-lived S3 credentials.
+      Serial: 1
 
   ServerContainer:
     Type: AWS::Lightsail::Container
@@ -158,8 +167,13 @@ Resources:
           Type: Schedule
           Properties:
             Schedule: rate(1 hour)
-            Name: hamama-scraper-schedule
-            Enabled: true
+            Name: phytech-scraper-schedule
+            # Disabled until the server actually has a deployment. On the
+            # bootstrap deploy the server is bare (no PublicEndpoint, so
+            # !GetAtt ServerContainer.Url 404s); running the schedule then would
+            # point the scraper at a dead URL. Flips to enabled once the real
+            # ServerImageUri is attached (HasDeployment becomes true).
+            Enabled: !If [HasDeployment, true, false]
 
 Outputs:
   ServerUrl:

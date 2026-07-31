@@ -39,6 +39,14 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
+    env:
+      # Shared stack parameters forwarded to sam deploy (by sam-deploy.sh) for
+      # both the bootstrap and the real deploy. Declared once at job level so
+      # the two sam-deploy.sh call sites can't drift apart.
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+      PHYTECH_EMAIL: ${{ secrets.PHYTECH_EMAIL }}
+      PHYTECH_PASSWORD: ${{ secrets.PHYTECH_PASSWORD }}
     steps:
       - uses: actions/checkout@v7
 
@@ -106,71 +114,38 @@ jobs:
       # template's HasDeployment condition), so the service is created with no
       # deployment. On every later deploy the service exists and this is skipped.
       - name: Bootstrap Lightsail service (first deploy only)
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
-          PHYTECH_EMAIL: ${{ secrets.PHYTECH_EMAIL }}
-          PHYTECH_PASSWORD: ${{ secrets.PHYTECH_PASSWORD }}
         run: |
           if aws lightsail get-container-services --service-name hamama-server \
               --query 'length(containerServices)' --output text 2>/dev/null | grep -q '^1$'; then
             echo "Lightsail service already exists — skipping bootstrap."
           else
             echo "Lightsail service missing — bootstrapping (no deployment)..."
-            # ServerImageUri intentionally omitted so its Default ("") applies
-            # and the deployment block is gated out.
-            sam deploy \
-              --template-file template.yaml \
-              --stack-name hamama \
-              --region "${AWS_REGION}" \
-              --capabilities CAPABILITY_NAMED_IAM \
-              --s3-bucket "${SAM_BUCKET}" \
-              --s3-prefix hamama \
-              --no-confirm-changeset \
-              --no-disable-rollback \
-              --no-fail-on-empty-changeset \
-              --parameter-overrides \
-                DatabaseUrl="${DATABASE_URL}" \
-                AuthToken="${AUTH_TOKEN}" \
-                PhytechEmail="${PHYTECH_EMAIL}" \
-                PhytechPassword="${PHYTECH_PASSWORD}"
+            # ServerImageUri intentionally omitted (empty arg) so its Default
+            # ("") applies and the deployment block is gated out.
+            .github/scripts/sam-deploy.sh ""
           fi
 
       - name: Push image to Lightsail
-        # Pushes to Lightsail's managed registry. Captures the registered image
-        # URI (":hamama-server.server.N") for the deploy step below.
+        # Pushes to Lightsail's managed registry. `push-container-image` is a
+        # lightsailctl-backed command that ignores --query/--output (lightsailctl
+        # issue #97), so capture the registered image URI by parsing the final
+        # "Refer to this image as ..." line instead of the (ignored) --query.
         run: |
-          image_uri=$(aws lightsail push-container-image \
+          push_log=$(aws lightsail push-container-image \
             --service-name hamama-server \
             --label server \
-            --image server:latest \
-            --query 'image' --output text)
+            --image server:latest 2>&1)
+          echo "$push_log"
+          image_uri=$(printf '%s\n' "$push_log" \
+            | grep -oE ':hamama-server\.server\.[0-9]+' | tail -1 || true)
+          if [ -z "$image_uri" ]; then
+            echo "::error::Failed to parse image URI from push-container-image output" >&2
+            exit 1
+          fi
           echo "image_uri=${image_uri}" >> "$GITHUB_ENV"
           echo "Pushed ${image_uri}"
 
       - name: Deploy (sam deploy)
-        # Secrets/env passed through env vars so values with shell
-        # metacharacters don't break the sam deploy parameter parsing.
         env:
           IMAGE_URI: ${{ env.image_uri }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
-          PHYTECH_EMAIL: ${{ secrets.PHYTECH_EMAIL }}
-          PHYTECH_PASSWORD: ${{ secrets.PHYTECH_PASSWORD }}
-        run: |
-          sam deploy \
-            --template-file template.yaml \
-            --stack-name hamama \
-            --region "${AWS_REGION}" \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --s3-bucket "${SAM_BUCKET}" \
-            --s3-prefix hamama \
-            --no-confirm-changeset \
-            --no-disable-rollback \
-            --no-fail-on-empty-changeset \
-            --parameter-overrides \
-              ServerImageUri="${IMAGE_URI}" \
-              DatabaseUrl="${DATABASE_URL}" \
-              AuthToken="${AUTH_TOKEN}" \
-              PhytechEmail="${PHYTECH_EMAIL}" \
-              PhytechPassword="${PHYTECH_PASSWORD}"
+        run: .github/scripts/sam-deploy.sh "${IMAGE_URI}"
