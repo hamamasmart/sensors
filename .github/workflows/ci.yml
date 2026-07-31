@@ -28,7 +28,9 @@ jobs:
       - name: Install Rust toolchain
         uses: moonrepo/setup-rust@v1
         with:
-          cache-target: release
+          # clippy builds in the dev (debug) profile, so the ffmpeg-next
+          # from-source build lands in target/debug — cache that, not release.
+          cache-target: debug
 
       # sqlx's build-time query check connects to the DB unless told to use the
       # cached query data checked into the repo. Mirror the deploy build.

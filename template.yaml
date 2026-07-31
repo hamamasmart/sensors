@@ -1,27 +1,52 @@
-# AWS SAM template for the hamama stack.
+# AWS SAM template for the hamama stack — all AWS infra in one place.
 #
-# Defines the entire Lambda deployment that used to be done with manual steps:
-#   - server  : HTTP function (lambda_http) fronted by a Lambda Function URL
-#               (AuthType NONE). Owns the DB connection and runs migrations.
-#   - scraper  : event-driven function (lambda_runtime) triggered on a schedule.
+# Two services:
+#   - server  : AWS::Lightsail::Container (power nano, scale 1, ~$7/mo).
+#               Managed HTTPS on a stable default *.cs.amazonlightsail.com
+#               domain (no own domain needed, free cert) and NO request-body
+#               cap — large camera images that the old Lambda Function URL
+#               rejected with HTTP 413 now stream straight through.
+#   - scraper : AWS::Serverless::Function (lambda_runtime), hourly schedule.
 #
-# Wiring that was previously manual is now expressed in-template:
-#   - the server's Function URL (was `aws lambda create-function-url-config`),
-#   - the EventBridge schedule that triggers the scraper (was a hand-made cron),
-#   - the execution roles for both functions,
-#   - SERVER_URL, taken straight from the server's Function URL via !GetAtt so
-#     nothing has to be copied into a repo variable by hand.
+# The Lightsail load balancer terminates TLS and proxies to the container on
+# 8080. The server (crates/server) runs plain axum; /health (unauthenticated)
+# is the LB's liveness probe, every other route is guarded by the AUTH_TOKEN
+# bearer. SERVER_URL for the scraper is taken straight from the container's
+# Url attribute via !GetAtt, so nothing has to wire it by hand.
 #
-# Note on auth: the Function URL is AuthType NONE (public), but every server
-# route is guarded by a shared bearer token (AUTH_TOKEN) that the scraper also
-# sends, so the endpoint is never actually unauthenticated at the app layer.
+# Lightsail containers can't assume IAM roles, so the server gets long-lived S3
+# credentials as env vars. To avoid a manual IAM step, the template itself
+# provisions a dedicated IAM user (S3UploaderUser) with an inline policy scoped
+# to s3:CreateBucket + s3:PutObject on the camera-images bucket, plus an access
+# key (S3UploaderKey) whose id/secret are wired straight into the container
+# environment. Rotate by bumping S3UploaderKey.Serial — CloudFormation replaces
+# the key and redeploys the server with the new secret. (Secrets Manager would be
+# the usual guidance, but a Lightsail container can't read it without a static
+# key — same chicken-and-egg — so the CFN-managed access key is the pragmatic
+# fully-automated choice here.)
+#
+# --- Two-phase first deploy (why ServerImageUri defaults to "") ---
+# `aws lightsail push-container-image` can only push to a service that already
+# exists, but the service is created HERE by CloudFormation. To break the cycle,
+# the very first deploy omits the deployment (ServerImageUri="" → HasDeployment
+# is false → ContainerServiceDeployment is AWS::NoValue), creating the bare
+# service. The deploy workflow then pushes the image and re-runs sam deploy with
+# the real ServerImageUri, which attaches the deployment. Every later deploy just
+# pushes and re-deploys in one pass.
 
 Transform: AWS::Serverless-2016-10-31
 
 Parameters:
+  ServerImageUri:
+    Type: String
+    Default: ""
+    Description: >
+      Lightsail-registered image URI (":hamama-server.server.N") from
+      `aws lightsail push-container-image`. Left empty on the bootstrap deploy
+      so the service is created with no deployment.
   DatabaseUrl:
     Type: String
-    Description: Postgres connection string used by the server Lambda.
+    Description: Postgres connection string used by the server.
     NoEcho: true
   AuthToken:
     Type: String
@@ -35,35 +60,82 @@ Parameters:
     Description: Phytech account password used by the scraper.
     NoEcho: true
 
+Conditions:
+  # True when a real image URI was supplied (i.e. not the bootstrap deploy).
+  HasDeployment: !Not [!Equals [!Ref ServerImageUri, ""]]
+
 Resources:
-  ServerFunction:
-    Type: AWS::Serverless::Function
+  # Dedicated IAM user + access key the server uses to write camera images to S3.
+  # Lightsail containers can't assume roles, so a static key is unavoidable;
+  # provisioning it here keeps the deploy fully automated (no manual IAM step, no
+  # GitHub secret to rotate by hand). The S3_BUCKET_NAME is hardcoded in the
+  # server (crates/server/src/main.rs); the ARN below must match it.
+  S3UploaderUser:
+    Type: AWS::IAM::User
     Properties:
-      FunctionName: server
-      CodeUri: target/lambda/server
-      Handler: bootstrap
-      Runtime: provided.al2023
-      Architectures: [arm64]
-      MemorySize: 256
-      Timeout: 30
-      Environment:
-        Variables:
-          DATABASE_URL: !Ref DatabaseUrl
-          AUTH_TOKEN: !Ref AuthToken
+      UserName: hamama-server-s3
       Policies:
-        # The bucket name is hardcoded in the server (S3_BUCKET_NAME). The role
-        # needs CreateBucket so the server can create it on first run, plus
-        # PutObject to stream camera images into it.
-        - Statement:
-            - Effect: Allow
-              Action:
-                - s3:CreateBucket
-                - s3:PutObject
-              Resource:
-                - !Sub "arn:aws:s3:::phytech-camera-images"
-                - !Sub "arn:aws:s3:::phytech-camera-images/*"
-      FunctionUrlConfig:
-        AuthType: NONE
+        - PolicyName: hamama-server-s3-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:PutObject
+                Resource:
+                  - !Sub "arn:aws:s3:::hamama-camera-images"
+                  - !Sub "arn:aws:s3:::hamama-camera-images/*"
+
+  S3UploaderKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref S3UploaderUser
+
+  ServerContainer:
+    Type: AWS::Lightsail::Container
+    Properties:
+      ServiceName: hamama-server
+      Power: nano
+      Scale: 1
+      # On the bootstrap deploy (ServerImageUri empty) the whole deployment is
+      # omitted via AWS::NoValue, so the service is created bare and the image
+      # can be pushed to its registry before a real deploy attaches this block.
+      ContainerServiceDeployment:
+        Fn::If:
+          - HasDeployment
+          - Containers:
+              - ContainerName: server
+                Image: !Ref ServerImageUri
+                Ports:
+                  - Port: "8080"
+                    Protocol: HTTP
+                Environment:
+                  - Variable: DATABASE_URL
+                    Value: !Ref DatabaseUrl
+                  - Variable: AUTH_TOKEN
+                    Value: !Ref AuthToken
+                  - Variable: AWS_ACCESS_KEY_ID
+                    Value: !Ref S3UploaderKey
+                  - Variable: AWS_SECRET_ACCESS_KEY
+                    Value: !GetAtt S3UploaderKey.SecretAccessKey
+                  - Variable: AWS_REGION
+                    Value: !Ref AWS::Region
+                  - Variable: BIND_ADDR
+                    Value: 0.0.0.0:8080
+            PublicEndpoint:
+              ContainerName: server
+              ContainerPort: 8080
+              HealthCheckConfig:
+                # Unauthenticated liveness route (returns 200) so the LB
+                # doesn't need the bearer token to probe.
+                Path: /health
+                SuccessCodes: "200"
+                HealthyThreshold: 2
+                UnhealthyThreshold: 3
+                IntervalSeconds: 15
+                TimeoutSeconds: 5
+          - !Ref AWS::NoValue
 
   ScraperFunction:
     Type: AWS::Serverless::Function
@@ -77,7 +149,7 @@ Resources:
       Timeout: 300
       Environment:
         Variables:
-          SERVER_URL: !GetAtt ServerFunctionUrl.FunctionUrl
+          SERVER_URL: !GetAtt ServerContainer.Url
           AUTH_TOKEN: !Ref AuthToken
           PHYTECH_EMAIL: !Ref PhytechEmail
           PHYTECH_PASSWORD: !Ref PhytechPassword
@@ -86,10 +158,10 @@ Resources:
           Type: Schedule
           Properties:
             Schedule: rate(1 hour)
-            Name: phytech-scraper-schedule
+            Name: hamama-scraper-schedule
             Enabled: true
 
 Outputs:
-  ServerFunctionUrl:
-    Description: HTTPS endpoint of the server Lambda (called by the scraper).
-    Value: !GetAtt ServerFunctionUrl.FunctionUrl
+  ServerUrl:
+    Description: HTTPS endpoint of the server on Lightsail (called by the Pi + scraper).
+    Value: !GetAtt ServerContainer.Url

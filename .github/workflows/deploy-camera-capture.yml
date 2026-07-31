@@ -6,9 +6,9 @@ name: Deploy camera-capture (arm64)
 # On every merge to `main` that touches `crates/camera-capture/**` (or this
 # workflow), and on demand from the Actions tab:
 #   1. build the aarch64 release binary natively on a GitHub-hosted ARM runner,
-#   2. generate cameras.toml from secrets + the deployed server's Function
-#      URL (server_url from the hamama stack output, auth_token from
-#      AUTH_TOKEN, the rest from CAMERAS_CONFIG_TOML),
+#   2. generate cameras.toml from secrets + the deployed server's Lightsail
+#      HTTPS URL (server_url from the hamama stack `ServerUrl` output,
+#      auth_token from AUTH_TOKEN, the rest from CAMERAS_CONFIG_TOML),
 #   3. join the ephemeral runner to the tailnet with a Tailscale auth key,
 #   4. scp the binary + systemd unit + generated config to the Pi, install,
 #      and restart the service.
@@ -76,9 +76,10 @@ jobs:
 
       - name: Generate cameras.toml
         # Assembles the live config from three sources, none of which lives in
-        # the repo: server_url (deployed server Function URL, read from the
-        # hamama stack output), auth_token (AUTH_TOKEN secret), and the rest
-        # (CAMERAS_CONFIG_TOML secret). See the script header for details.
+        # the repo: server_url (the deployed server's Lightsail HTTPS URL, read
+        # from the hamama stack `ServerUrl` output), auth_token (AUTH_TOKEN
+        # secret), and the rest (CAMERAS_CONFIG_TOML secret). See the script
+        # header for details.
         env:
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
           CAMERAS_CONFIG_TOML: ${{ secrets.CAMERAS_CONFIG_TOML }}

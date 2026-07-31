@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Generate the live cameras.toml on the runner from three sources, none of
 # which lives in the repo:
-#   server_url  — the deployed server Lambda Function URL, read from the
-#                 `hamama` CloudFormation stack output `ServerFunctionUrl`
+#   server_url  — the deployed server's Lightsail HTTPS URL, read from the
+#                 `hamama` CloudFormation stack output `ServerUrl` (the
+#                 AWS::Lightsail::Container's Url attribute)
 #   auth_token  — the AUTH_TOKEN secret (shared with the scraper/server)
 #   the rest     — the CAMERAS_CONFIG_TOML secret (interval + [[cameras]] defs)
 #
@@ -15,10 +16,10 @@
 set -euo pipefail
 
 server_url="$(aws cloudformation describe-stacks --stack-name hamama \
-  --query "Stacks[0].Outputs[?OutputKey=='ServerFunctionUrl'].OutputValue" \
+  --query "Stacks[0].Outputs[?OutputKey=='ServerUrl'].OutputValue" \
   --output text)"
 # The uploader appends "/cameras/images", so trim the trailing slash the
-# Function URL ships with.
+# Lightsail URL ships with.
 server_url="${server_url%/}"
 
 {

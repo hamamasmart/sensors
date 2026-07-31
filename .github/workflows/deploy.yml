@@ -1,15 +1,35 @@
-name: Deploy to AWS Lambda (SAM)
+name: Deploy (server to Lightsail, scraper to Lambda)
 
-# Deploys the hamama stack defined in template.yaml with AWS SAM. Everything
-# that used to be manual (Function URLs, the scraper schedule, execution roles,
-# SERVER_URL wiring) now lives in the template — this workflow just builds and
-# ships it.
+# All AWS infra is declared in template.yaml (one SAM stack): the
+# AWS::Lightsail::Container that runs the server, and the scraper Lambda. This
+# workflow builds the artifacts, pushes the container image, and runs
+# `sam deploy` against that single template.
+#
+# Two-phase first deploy: `aws lightsail push-container-image` can only push to
+# a service that already exists, but the service is created by CloudFormation.
+# So on the very first run, the workflow runs `sam deploy` with ServerImageUri
+# empty (the template gates the deployment out, creating a bare service), then
+# pushes the image, then runs `sam deploy` again with the real image URI to
+# attach the deployment. Every later deploy finds the service already present and
+# just does push + one `sam deploy`.
+#
+# The server runs plain axum (no Lambda). The Lightsail load balancer terminates
+# TLS (managed *.cs.amazonlightsail.com domain, no own domain needed) and
+# streams the raw body to the container, so camera-image uploads >6 MB that the
+# old Lambda Function URL rejected with HTTP 413 now succeed.
+#
+# Lightsail containers can't assume IAM roles, so the server gets long-lived S3
+# credentials as env vars. The IAM user + access key are provisioned by the
+# template itself (S3UploaderUser / S3UploaderKey) — no manual IAM step, no S3
+# GitHub secrets to manage.
 #
 # Required GitHub secrets:
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  - CI user (Lightsail + SAM perms)
 #   DATABASE_URL      - postgres connection string for the server
 #   AUTH_TOKEN        - shared bearer token (server checks it, scraper sends it)
 #   PHYTECH_EMAIL, PHYTECH_PASSWORD
+# Required GitHub vars:
+#   AWS_REGION          - must match the camera-images bucket's region (eu-north-1)
 
 on:
   push:
@@ -18,21 +38,38 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
+      # cargo-lambda builds the scraper; the server is a plain cargo build.
+      # Swatinem/rust-cache (below) caches the whole target/ tree — both the
+      # server's target/release (amd64) and the scraper's target/lambda
+      # (aarch64 cross-compile) — so disable moonrepo's narrower cache.
       - name: Install Rust toolchain with Cargo Lambda
         uses: moonrepo/setup-rust@v1
         with:
           bins: cargo-lambda
-          cache-target: release
+          cache: false
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
 
       - name: Install Zig toolchain
+        # cargo-lambda cross-compiles the scraper to arm64 via zig.
         uses: mlugg/setup-zig@v2
 
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@v3
+
+      - name: Install lightsailctl
+        # `aws lightsail push-container-image` delegates to the lightsailctl
+        # plugin, which isn't on the runner by default. ubuntu-24.04 is amd64.
+        run: |
+          sudo curl -fsS "https://s3.us-west-2.amazonaws.com/lightsailctl/latest/linux-amd64/lightsailctl" \
+            -o /usr/local/bin/lightsailctl
+          sudo chmod +x /usr/local/bin/lightsailctl
+          lightsailctl --version || true
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -41,19 +78,81 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # --- Build artifacts ------------------------------------------------
+      - name: Build server binary
+        # Native amd64 (Lightsail is x86_64-only). SQLX_OFFLINE uses the committed
+        # .sqlx query cache so the build doesn't need a DB connection.
+        env:
+          SQLX_OFFLINE: "true"
+        run: cargo build --release -p server
+
+      - name: Build server container image
+        # Stage just the binary next to the Dockerfile as the build context, so
+        # `docker build` never uploads the multi-GB target/ tree to the daemon.
+        run: |
+          mkdir -p deploy/server
+          cp target/release/server deploy/server/
+          docker build -t server:latest -f crates/server/Dockerfile deploy/server
+
+      - name: Build scraper Lambda artifact
+        run: cargo lambda build --release --arm64 -p scraper
+
       - name: Ensure SAM artifacts bucket exists
         run: .github/scripts/ensure-sam-bucket.sh
 
-      - name: Build Lambda artifacts
+      # --- First deploy only: create the bare Lightsail service so the image --
+      # can be pushed to its registry (push-container-image needs the service to
+      # exist). The deployment is gated out by an empty ServerImageUri (the
+      # template's HasDeployment condition), so the service is created with no
+      # deployment. On every later deploy the service exists and this is skipped.
+      - name: Bootstrap Lightsail service (first deploy only)
         env:
-          SQLX_OFFLINE: "true"
-        run: cargo lambda build --release --arm64 -p server -p scraper
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+          PHYTECH_EMAIL: ${{ secrets.PHYTECH_EMAIL }}
+          PHYTECH_PASSWORD: ${{ secrets.PHYTECH_PASSWORD }}
+        run: |
+          if aws lightsail get-container-services --service-name hamama-server \
+              --query 'length(containerServices)' --output text 2>/dev/null | grep -q '^1$'; then
+            echo "Lightsail service already exists — skipping bootstrap."
+          else
+            echo "Lightsail service missing — bootstrapping (no deployment)..."
+            # ServerImageUri intentionally omitted so its Default ("") applies
+            # and the deployment block is gated out.
+            sam deploy \
+              --template-file template.yaml \
+              --stack-name hamama \
+              --region "${AWS_REGION}" \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --s3-bucket "${SAM_BUCKET}" \
+              --s3-prefix hamama \
+              --no-confirm-changeset \
+              --no-disable-rollback \
+              --no-fail-on-empty-changeset \
+              --parameter-overrides \
+                DatabaseUrl="${DATABASE_URL}" \
+                AuthToken="${AUTH_TOKEN}" \
+                PhytechEmail="${PHYTECH_EMAIL}" \
+                PhytechPassword="${PHYTECH_PASSWORD}"
+          fi
+
+      - name: Push image to Lightsail
+        # Pushes to Lightsail's managed registry. Captures the registered image
+        # URI (":hamama-server.server.N") for the deploy step below.
+        run: |
+          image_uri=$(aws lightsail push-container-image \
+            --service-name hamama-server \
+            --label server \
+            --image server:latest \
+            --query 'image' --output text)
+          echo "image_uri=${image_uri}" >> "$GITHUB_ENV"
+          echo "Pushed ${image_uri}"
 
       - name: Deploy (sam deploy)
-        # Secrets are passed through env vars rather than interpolated into the
-        # script, so values with spaces/commas/shell metacharacters don't break
-        # parsing or the shell.
+        # Secrets/env passed through env vars so values with shell
+        # metacharacters don't break the sam deploy parameter parsing.
         env:
+          IMAGE_URI: ${{ env.image_uri }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
           PHYTECH_EMAIL: ${{ secrets.PHYTECH_EMAIL }}
@@ -70,6 +169,7 @@ jobs:
             --no-disable-rollback \
             --no-fail-on-empty-changeset \
             --parameter-overrides \
+              ServerImageUri="${IMAGE_URI}" \
               DatabaseUrl="${DATABASE_URL}" \
               AuthToken="${AUTH_TOKEN}" \
               PhytechEmail="${PHYTECH_EMAIL}" \
