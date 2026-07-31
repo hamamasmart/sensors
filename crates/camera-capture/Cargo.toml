@@ -12,6 +12,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 onvif = { git = "https://github.com/lumeohq/onvif-rs" }
 schema = { git = "https://github.com/lumeohq/onvif-rs", features = ["devicemgmt", "media", "ptz"] }
 serde = { version = "1", features = ["derive"] }
+# Pure-Rust sunrise/sunset calculation so the capture loop can skip nighttime
+# ticks without any network call.
+sunrise = "1.2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
 toml = "1"
 tracing = "0.1"

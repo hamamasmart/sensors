@@ -1,23 +1,29 @@
 # Example configuration for the camera-capture loop.
 
-# Seconds between full passes over every camera.
-interval_secs = 300
-
 # Base URL of the cloud `server` (the crate that owns POST /cameras/images).
 # The `/cameras/images` path is appended automatically.
 server_url = "https://<your-server>.lambda-url.us-east-1.on.aws"
 auth_token = "shared-secret-bearer-token"
 
-# Each camera is a PTZ device on the LAN, reached over plain HTTP.
+# Global site location, shared by every camera that sets `daylight_only`.
+# Decimal degrees. Required only when at least one camera opts into daylight
+# gating; ignored otherwise.
+latitude = 32.0853   # Tel Aviv, e.g.
+longitude = 34.7818
+
+# Each camera is a PTZ device on the LAN, reached over plain HTTP, and runs on
+# its own cadence with its own daylight window.
 [[cameras]]
 uri = "http://192.168.0.226:8080" # device host root
 username = "admin"
 password = "admin"
-fix_time = true # set true if the camera's clock is skewed
-settle_secs = 10.0 # wait after a PTZ move before snapshotting
+interval_secs = 300               # seconds between captures of this camera
+daylight_only = true              # skip ticks outside sunrise→sunset
+daylight_margin_mins = 0          # trim [sunrise+margin, sunset-margin] edges
+fix_time = true                   # set true if the camera's clock is skewed
+settle_secs = 10.0                # wait after a PTZ move before snapshotting
   [[cameras.locations]]
   camera_id = "yard-north"
   pan = 0.0
   tilt = 0.0
   zoom = 0.5
-

@@ -10,13 +10,17 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Configuration {
-    /// Seconds between full passes over every camera.
-    pub interval_secs: u64,
     /// Base URL of the cloud `server` (HTTPS). The `/cameras/images` route is
     /// appended to it.
     pub server_url: String,
     /// Bearer token sent as `Authorization: Bearer <token>` to the server.
     pub auth_token: String,
+    /// Site latitude in degrees, [-90, 90]. Shared by every camera that opts
+    /// into `daylight_only`.
+    pub latitude: f64,
+    /// Site longitude in degrees, [-180, 180]. Shared by every camera that
+    /// opts into `daylight_only`.
+    pub longitude: f64,
     pub cameras: Vec<CameraConfig>,
 }
 
@@ -27,6 +31,22 @@ pub struct CameraConfig {
     pub uri: String,
     pub username: String,
     pub password: String,
+    /// Seconds between captures of this camera. Each camera keeps its own
+    /// cadence, independent of the others.
+    pub interval_secs: u64,
+    /// When true, this camera's ticks outside the daylight window
+    /// (sunrise → sunset, adjusted by `daylight_margin_mins`) are skipped
+    /// entirely — no moves, snapshots, or uploads. The site location comes
+    /// from the global `latitude` / `longitude`, which must be set when any
+    /// camera opts in here.
+    #[serde(default)]
+    pub daylight_only: bool,
+    /// Minutes shaved off each edge of this camera's daylight window: the
+    /// capture window becomes `[sunrise + margin, sunset - margin]`. A positive
+    /// value drops the twilight edges where frames would be too dark; negative
+    /// extends into twilight. Defaults to 0.
+    #[serde(default = "default_daylight_margin")]
+    pub daylight_margin_mins: i64,
     /// `"any"` (default) | `"digest"` | `"usernametoken"`.
     #[serde(default)]
     pub auth_type: Option<String>,
@@ -51,6 +71,10 @@ fn default_service_path() -> String {
 
 fn default_settle() -> f64 {
     2.0
+}
+
+fn default_daylight_margin() -> i64 {
+    0
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +132,111 @@ impl Configuration {
         let path = std::env::var("CAMERA_CONFIG").unwrap_or_else(|_| "cameras.toml".to_string());
         let contents = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read camera config from {path}"))?;
-        toml::from_str(&contents).context("Failed to parse camera config as TOML")
+        let config: Configuration =
+            toml::from_str(&contents).context("Failed to parse camera config as TOML")?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Cross-field checks that TOML deserialization can't express on its own.
+    fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.latitude.abs() <= 90.0,
+            "latitude must be in [-90, 90], got {}",
+            self.latitude
+        );
+        anyhow::ensure!(
+            self.longitude.abs() <= 180.0,
+            "longitude must be in [-180, 180], got {}",
+            self.longitude
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE: &str = r#"
+server_url = "https://example.test"
+auth_token = "tok"
+latitude = 32.0853
+longitude = 34.7818
+
+[[cameras]]
+uri = "http://192.168.0.226:8080"
+username = "admin"
+password = "admin"
+interval_secs = 300
+daylight_only = true
+daylight_margin_mins = 15
+
+  [[cameras.locations]]
+  camera_id = "yard-north"
+  pan = 0.0
+  tilt = 0.0
+  zoom = 0.5
+"#;
+
+    #[test]
+    fn parses_per_camera_daylight_and_interval() {
+        let config: Configuration = toml::from_str(SAMPLE).unwrap();
+        config.validate().unwrap();
+        let cam = &config.cameras[0];
+        assert_eq!(cam.interval_secs, 300);
+        assert!(cam.daylight_only);
+        assert_eq!(cam.daylight_margin_mins, 15);
+        assert_eq!(config.latitude, 32.0853);
+        assert_eq!(config.longitude, 34.7818);
+    }
+
+    #[test]
+    fn missing_coords_fails_to_parse() {
+        // latitude/longitude are required fields, so omitting them must fail
+        // at deserialization (before validation even runs).
+        let bad = r#"
+server_url = "https://example.test"
+auth_token = "tok"
+
+[[cameras]]
+uri = "http://x"
+username = "a"
+password = "b"
+interval_secs = 60
+
+  [[cameras.locations]]
+  camera_id = "c"
+  pan = 0.0
+  tilt = 0.0
+  zoom = 0.0
+"#;
+        assert!(toml::from_str::<Configuration>(bad).is_err());
+    }
+
+    #[test]
+    fn out_of_range_coords_rejected_even_without_daylight() {
+        // Coordinates are always required and validated, regardless of whether
+        // any camera opts into daylight gating.
+        let bad = r#"
+server_url = "https://example.test"
+auth_token = "tok"
+latitude = 200.0
+longitude = 0.0
+
+[[cameras]]
+uri = "http://x"
+username = "a"
+password = "b"
+interval_secs = 60
+
+  [[cameras.locations]]
+  camera_id = "c"
+  pan = 0.0
+  tilt = 0.0
+  zoom = 0.0
+"#;
+        let config: Configuration = toml::from_str(bad).unwrap();
+        assert!(config.validate().is_err());
     }
 }
