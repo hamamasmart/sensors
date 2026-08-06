@@ -34,6 +34,10 @@ Parameters:
     Type: String
     Description: Phytech account password used by the scraper.
     NoEcho: true
+  OpenRouterApiKey:
+    Type: String
+    Description: Bearer token for OpenRouter (Gemini access) used by the analyzer.
+    NoEcho: true
 
 Resources:
   ServerFunction:
@@ -50,6 +54,9 @@ Resources:
         Variables:
           DATABASE_URL: !Ref DatabaseUrl
           AUTH_TOKEN: !Ref AuthToken
+          # Name of the analyzer function the server async-invokes per analysis
+          # shard (one per camera) from POST /cameras/analyze.
+          ANALYZER_FUNCTION_NAME: !Ref AnalyzerFunction
       Policies:
         # The bucket name is hardcoded in the server (S3_BUCKET_NAME). The role
         # needs CreateBucket so the server can create it on first run, plus
@@ -62,8 +69,50 @@ Resources:
               Resource:
                 - !Sub "arn:aws:s3:::phytech-camera-images"
                 - !Sub "arn:aws:s3:::phytech-camera-images/*"
+        # Async-invoke one analyzer Lambda per analysis shard.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !GetAtt AnalyzerFunction.Arn
       FunctionUrlConfig:
         AuthType: NONE
+
+  AnalyzerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: analyzer
+      CodeUri: target/lambda/analyzer
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      # Per-shard cap (one camera). Total job time is unbounded because shards
+      # run independently — the 15-min limit applies per shard, not per job.
+      MemorySize: 1024
+      Timeout: 900
+      Environment:
+        Variables:
+          SERVER_URL: !GetAtt ServerFunctionUrl.FunctionUrl
+          AUTH_TOKEN: !Ref AuthToken
+          OPENROUTER_API_KEY: !Ref OpenRouterApiKey
+          OPENROUTER_MODEL: google/gemini-2.5-flash-lite
+          S3_BUCKET: phytech-camera-images
+          BATCH_SIZE: "8"
+          MAX_CONCURRENT_BATCHES: "3"
+          MAX_IMAGES_PER_SHARD: "1000"
+      Policies:
+        # Read-only access to the camera image bucket — the analyzer only lists
+        # and fetches images; it never writes to S3 and never touches Bedrock
+        # (OpenRouter is plain outbound HTTPS).
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "arn:aws:s3:::phytech-camera-images/*"
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource: !Sub "arn:aws:s3:::phytech-camera-images"
 
   ScraperFunction:
     Type: AWS::Serverless::Function

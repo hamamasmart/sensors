@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE analysis_jobs\n        SET status = $2, error = $3, completed_at = NOW()\n        WHERE job_id = $1 AND status = 'running'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "275fafaf485264075526762000e3114733d97c89442f034f772348cbb56398d9"
+}

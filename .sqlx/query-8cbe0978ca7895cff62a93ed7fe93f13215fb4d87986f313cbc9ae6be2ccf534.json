@@ -1,0 +1,133 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO analysis_jobs\n            (camera_ids, prompt, provider, category, measurement_unit, depth_value,\n             depth_unit, starts_at, ends_at, shards_total, status)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')\n        RETURNING job_id, prompt, provider, category, measurement_unit, depth_value,\n                  depth_unit, starts_at, ends_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "job_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "job_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "prompt",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "prompt"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "provider",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "category",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "category"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "measurement_unit",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "measurement_unit"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "depth_value",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "depth_value"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "depth_unit",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "depth_unit"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "starts_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "starts_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "ends_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "ends_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Float8",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "8cbe0978ca7895cff62a93ed7fe93f13215fb4d87986f313cbc9ae6be2ccf534"
+}

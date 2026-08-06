@@ -1,0 +1,148 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT job_id, status, error, shards_total, shards_done, shards_failed,\n               images_total, images_ok, created_at, started_at, completed_at\n        FROM analysis_jobs\n        WHERE job_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "job_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "job_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "shards_total",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "shards_total"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "shards_done",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "shards_done"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "shards_failed",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "shards_failed"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "images_total",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "images_total"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "images_ok",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "images_ok"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "started_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "completed_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "completed_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "8f326015ca58407316106a86559ddb149aea583a972a8d6ab4143b1b94e8c233"
+}

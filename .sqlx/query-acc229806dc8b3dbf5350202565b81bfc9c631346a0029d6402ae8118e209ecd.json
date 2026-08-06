@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE analysis_jobs\n        SET status = 'running', started_at = COALESCE(started_at, NOW())\n        WHERE job_id = $1 AND status = 'pending'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "acc229806dc8b3dbf5350202565b81bfc9c631346a0029d6402ae8118e209ecd"
+}

@@ -4,7 +4,7 @@ mod handlers;
 
 use crate::configuration::Configuration;
 use anyhow::Context;
-use axum::{Router, middleware::from_fn_with_state, routing::post};
+use axum::{Router, middleware::from_fn_with_state, routing::{get, post}};
 use s3::BucketConfiguration;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
@@ -41,9 +41,19 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("Failed to set up S3 bucket")?;
 
+    // The server async-invokes one analyzer shard per camera from
+    // `POST /cameras/analyze`. Region/credentials come from the environment the
+    // same way as S3 (on Lambda: execution role + AWS_REGION).
+    let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .load()
+        .await;
+    let lambda = aws_sdk_lambda::Client::new(&aws_config);
+
     let state = handlers::AppState {
         pool,
         s3: bucket,
+        lambda,
+        analyzer_function_name: config.analyzer_function_name,
     };
 
     let app = Router::new()
@@ -53,6 +63,19 @@ async fn main() -> anyhow::Result<()> {
             post(handlers::insert_measurements),
         )
         .route("/cameras/images", post(handlers::upload_camera_image))
+        .route("/cameras/analyze", post(handlers::analyze_cameras))
+        .route(
+            "/analysis/jobs/{job_id}/start",
+            post(handlers::start_analysis_job),
+        )
+        .route(
+            "/analysis/jobs/{job_id}/complete",
+            post(handlers::complete_analysis_job),
+        )
+        .route(
+            "/analysis/jobs/{job_id}",
+            get(handlers::get_analysis_job),
+        )
         .layer(from_fn_with_state(
             auth::ExpectedToken(config.auth_token),
             auth::require_bearer_token,

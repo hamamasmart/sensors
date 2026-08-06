@@ -1,0 +1,80 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE analysis_jobs SET\n            completed_shards = CASE WHEN NOT completed_shards @> ARRAY[$5]::text[]\n                                    THEN completed_shards || $5 ELSE completed_shards END,\n            images_total  = images_total  + CASE WHEN NOT completed_shards @> ARRAY[$5]::text[]\n                                                THEN $2 ELSE 0 END,\n            images_ok     = images_ok     + CASE WHEN NOT completed_shards @> ARRAY[$5]::text[]\n                                                THEN $3 ELSE 0 END,\n            shards_done   = shards_done   + CASE WHEN NOT completed_shards @> ARRAY[$5]::text[]\n                                                 AND $4 = 'done'   THEN 1 ELSE 0 END,\n            shards_failed = shards_failed + CASE WHEN NOT completed_shards @> ARRAY[$5]::text[]\n                                                  AND $4 = 'failed' THEN 1 ELSE 0 END\n        WHERE job_id = $1\n        RETURNING images_total, images_ok, shards_total, shards_done, shards_failed\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "images_total",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "images_total"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "images_ok",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "images_ok"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "shards_total",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "shards_total"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "shards_done",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "shards_done"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "shards_failed",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "analysis_jobs",
+            "name": "shards_failed"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "dc2feb365c41a3d1cab7eb3b4cd285fd69417b395633fee06febfdda9b4ce98e"
+}

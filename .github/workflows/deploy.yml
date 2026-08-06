@@ -10,6 +10,7 @@ name: Deploy to AWS Lambda (SAM)
 #   DATABASE_URL      - postgres connection string for the server
 #   AUTH_TOKEN        - shared bearer token (server checks it, scraper sends it)
 #   PHYTECH_EMAIL, PHYTECH_PASSWORD
+#   OPENROUTER_API_KEY - OpenRouter bearer token used by the analyzer
 
 on:
   push:
@@ -47,7 +48,7 @@ jobs:
       - name: Build Lambda artifacts
         env:
           SQLX_OFFLINE: "true"
-        run: cargo lambda build --release --arm64 -p server -p scraper
+        run: cargo lambda build --release --arm64 -p server -p scraper -p analyzer
 
       - name: Deploy (sam deploy)
         # Secrets are passed through env vars rather than interpolated into the
@@ -58,6 +59,7 @@ jobs:
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
           PHYTECH_EMAIL: ${{ secrets.PHYTECH_EMAIL }}
           PHYTECH_PASSWORD: ${{ secrets.PHYTECH_PASSWORD }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           sam deploy \
             --template-file template.yaml \
@@ -73,4 +75,5 @@ jobs:
               DatabaseUrl="${DATABASE_URL}" \
               AuthToken="${AUTH_TOKEN}" \
               PhytechEmail="${PHYTECH_EMAIL}" \
-              PhytechPassword="${PHYTECH_PASSWORD}"
+              PhytechPassword="${PHYTECH_PASSWORD}" \
+              OpenRouterApiKey="${OPENROUTER_API_KEY}"
