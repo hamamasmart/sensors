@@ -27,3 +27,7 @@ settle_secs = 10.0                # wait after a PTZ move before snapshotting
   pan = 0.0
   tilt = 0.0
   zoom = 0.5
+  # Optional manual focus for this location: an absolute focus position in the
+  # camera's device-specific range (commonly [0, 1]). Setting it disables
+  # autofocus for the capture; leave it unset to keep the camera's autofocus.
+  focus = 0.8

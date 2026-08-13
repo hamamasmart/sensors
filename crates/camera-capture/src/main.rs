@@ -180,6 +180,18 @@ async fn capture_location(
     let target = loc.target()?;
 
     clients.move_to(&target).await?;
+    // Apply focus right after the move so the single settle window below
+    // covers both the PTZ travel and the focus lens. A location that sets
+    // `focus` drives the lens to that absolute position (disabling autofocus);
+    // a location that doesn't restores autofocus unconditionally, so a manual
+    // focus left by an earlier location or tick never leaks into this capture.
+    // The restore is re-issued every no-focus location rather than cached, so
+    // it stays correct even if something external toggles the camera's focus
+    // between our ticks. No-op when the camera has no imaging service.
+    match loc.focus {
+        Some(focus) => clients.set_manual_focus(focus).await?,
+        None => clients.set_autofocus().await?,
+    }
     sleep(settle).await;
 
     // Build an authenticated RTSP URL for ffmpeg.

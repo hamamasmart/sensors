@@ -5,13 +5,15 @@
 //! client per advertised service we care about (media, ptz). The cameras are
 //! reached over plain HTTP on the LAN.
 
+use std::sync::Mutex;
+
 use anyhow::Context;
 use url::Url;
 
 use onvif::soap::client::{AuthType, Client, ClientBuilder, Credentials};
 
 use schema::devicemgmt::{self, GetServices};
-use schema::onvif::ReferenceToken;
+use schema::onvif::{AbsoluteFocus, AutoFocusMode, FocusConfiguration20, FocusMove, ReferenceToken};
 
 use crate::configuration::{CameraConfig, LocationTarget};
 
@@ -21,8 +23,14 @@ pub struct CameraClients {
     pub media: Client,
     /// Required when a location needs movement.
     pub ptz: Option<Client>,
+    /// Required when a location sets `focus`. Best-effort: resolved only when
+    /// a camera actually advertises an imaging service.
+    pub imaging: Option<Client>,
     /// Resolved media profile token (configured or the first advertised).
     pub profile_token: String,
+    /// First advertised video-source token, resolved lazily on the first
+    /// `set_manual_focus` call so cameras that never set `focus` pay nothing.
+    video_source_token: Mutex<Option<String>>,
 }
 
 impl CameraClients {
@@ -70,6 +78,107 @@ impl CameraClients {
             }
         }
         Ok(())
+    }
+
+    /// Drive the lens to an absolute focus position, disabling autofocus for
+    /// the capture. No-op contract aside: callers only invoke this when the
+    /// location sets `focus`, so the lack of an imaging service is a hard error
+    /// rather than something to paper over silently.
+    pub async fn set_manual_focus(&self, focus: f64) -> anyhow::Result<()> {
+        let imaging = self.imaging.as_ref().context(
+            "camera advertises no imaging service but a location sets `focus`",
+        )?;
+        let video_source_token = self.video_source_token().await?;
+        schema::imaging::_move(
+            imaging,
+            &schema::imaging::Move {
+                video_source_token,
+                focus: vec![FocusMove {
+                    absolute: Some(AbsoluteFocus {
+                        position: focus,
+                        speed: None,
+                    }),
+                    relative: None,
+                    continuous: None,
+                }],
+            },
+        )
+        .await
+        .context("imaging Move (absolute focus) failed")?;
+        Ok(())
+    }
+
+    /// Re-enable autofocus, undoing a prior `set_manual_focus` on this tick or
+    /// a previous one. Round-trips the current imaging settings so only the
+    /// focus mode changes — brightness, exposure, white balance, etc. are
+    /// read back and written unchanged. No-op (Ok) when the camera exposes no
+    /// imaging service, since without one we could never have disabled
+    /// autofocus in the first place. Non-persistent (`force_persistence =
+    /// false`) so the camera's saved imaging preset is left intact.
+    pub async fn set_autofocus(&self) -> anyhow::Result<()> {
+        let imaging = match self.imaging.as_ref() {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        let video_source_token = self.video_source_token().await?;
+        let resp = schema::imaging::get_imaging_settings(
+            imaging,
+            &schema::imaging::GetImagingSettings {
+                video_source_token: ReferenceToken(video_source_token.0.clone()),
+            },
+        )
+        .await
+        .context("GetImagingSettings failed")?;
+        let mut settings = resp.imaging_settings;
+        match settings.focus.as_mut() {
+            Some(focus) => focus.auto_focus_mode = AutoFocusMode::Auto,
+            None => {
+                settings.focus = Some(FocusConfiguration20 {
+                    auto_focus_mode: AutoFocusMode::Auto,
+                    default_speed: None,
+                    near_limit: None,
+                    far_limit: None,
+                    extension: None,
+                    af_mode: None,
+                });
+            }
+        }
+        schema::imaging::set_imaging_settings(
+            imaging,
+            &schema::imaging::SetImagingSettings {
+                video_source_token,
+                imaging_settings: settings,
+                force_persistence: false,
+            },
+        )
+        .await
+        .context("SetImagingSettings (re-enable autofocus) failed")?;
+        Ok(())
+    }
+
+    /// Resolve and cache the first advertised video-source token. The token is
+    /// needed by the imaging service (which keys off video sources, not media
+    /// profiles). Cached per tick so multiple focus locations share one lookup;
+    /// the mutex is never held across the await.
+    async fn video_source_token(&self) -> anyhow::Result<ReferenceToken> {
+        {
+            let guard = self.video_source_token.lock().unwrap();
+            if let Some(token) = guard.as_ref() {
+                return Ok(ReferenceToken(token.clone()));
+            }
+        }
+        let resp = schema::media::get_video_sources(&self.media, &Default::default())
+            .await
+            .context("GetVideoSources failed")?;
+        let token = resp
+            .video_sources
+            .into_iter()
+            .next()
+            .map(|s| s.token.0)
+            .context("camera has no video sources")?;
+        let mut guard = self.video_source_token.lock().unwrap();
+        *guard = Some(token.clone());
+        Ok(ReferenceToken(token))
     }
 
     /// Ask the media service for the RTSP stream URI for this profile.
@@ -136,6 +245,7 @@ pub async fn discover(cam: &CameraConfig) -> anyhow::Result<CameraClients> {
 
     let mut media: Option<Client> = None;
     let mut ptz: Option<Client> = None;
+    let mut imaging: Option<Client> = None;
     for svc in &services.service {
         let url = match Url::parse(&svc.x_addr) {
             Ok(u) => u,
@@ -149,6 +259,7 @@ pub async fn discover(cam: &CameraConfig) -> anyhow::Result<CameraClients> {
         match svc.namespace.as_str() {
             "http://www.onvif.org/ver10/media/wsdl" => media = Some(client),
             "http://www.onvif.org/ver20/ptz/wsdl" => ptz = Some(client),
+            "http://www.onvif.org/ver20/imaging/wsdl" => imaging = Some(client),
             _ => {}
         }
     }
@@ -173,7 +284,9 @@ pub async fn discover(cam: &CameraConfig) -> anyhow::Result<CameraClients> {
     Ok(CameraClients {
         media,
         ptz,
+        imaging,
         profile_token,
+        video_source_token: Mutex::new(None),
     })
 }
 

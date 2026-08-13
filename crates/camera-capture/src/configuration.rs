@@ -93,6 +93,15 @@ pub struct LocationConfig {
     pub tilt: Option<f64>,
     #[serde(default)]
     pub zoom: Option<f64>,
+    /// Optional manual focus applied to this location after the move. An
+    /// absolute focus position in the camera's device-specific range (commonly
+    /// `[0, 1]`; query via the imaging `GetMoveOptions` to be sure). Applying it
+    /// disables autofocus for the capture, so set it only where a fixed focus
+    /// is wanted and leave it unset to keep the camera's autofocus. Orthogonal
+    /// to `preset` / pan-tilt-zoom: both a movement target and `focus` may be
+    /// set on the same location.
+    #[serde(default)]
+    pub focus: Option<f64>,
 }
 
 /// A resolved movement target, derived from a `LocationConfig`.
@@ -212,6 +221,38 @@ interval_secs = 60
   zoom = 0.0
 "#;
         assert!(toml::from_str::<Configuration>(bad).is_err());
+    }
+
+    #[test]
+    fn focus_is_optional_and_parsed_per_location() {
+        let with_focus = r#"
+server_url = "https://example.test"
+auth_token = "tok"
+latitude = 32.0853
+longitude = 34.7818
+
+[[cameras]]
+uri = "http://x"
+username = "a"
+password = "b"
+interval_secs = 60
+
+  [[cameras.locations]]
+  camera_id = "yard-north"
+  pan = 0.0
+  tilt = 0.0
+  zoom = 0.5
+  focus = 0.8
+
+  [[cameras.locations]]
+  camera_id = "yard-south"
+  preset = "SavedPreset1"
+"#;
+        let config: Configuration = toml::from_str(with_focus).unwrap();
+        config.validate().unwrap();
+        let locs = &config.cameras[0].locations;
+        assert_eq!(locs[0].focus, Some(0.8));
+        assert_eq!(locs[1].focus, None);
     }
 
     #[test]

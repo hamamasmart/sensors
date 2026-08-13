@@ -1373,6 +1373,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "imaging"
+version = "0.1.0"
+source = "git+https://github.com/lumeohq/onvif-rs#8f1490e2ce5e2ddd29dbd3ab2586d7a90da0b6d6"
+dependencies = [
+ "common",
+ "onvif-xsd",
+ "transport",
+ "validate",
+ "xml-rs",
+ "xsd-macro-utils",
+ "xsd-types",
+ "yaserde",
+ "yaserde_derive",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2465,6 +2481,7 @@ dependencies = [
  "common",
  "devicemgmt",
  "event",
+ "imaging",
  "media",
  "num-bigint",
  "onvif-xsd",

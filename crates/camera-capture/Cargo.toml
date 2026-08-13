@@ -10,7 +10,7 @@ dotenvy = "0.15"
 ffmpeg-next = { version = "8", features = ["build"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 onvif = { git = "https://github.com/lumeohq/onvif-rs" }
-schema = { git = "https://github.com/lumeohq/onvif-rs", features = ["devicemgmt", "media", "ptz"] }
+schema = { git = "https://github.com/lumeohq/onvif-rs", features = ["devicemgmt", "media", "ptz", "imaging"] }
 serde = { version = "1", features = ["derive"] }
 # Pure-Rust sunrise/sunset calculation so the capture loop can skip nighttime
 # ticks without any network call.
