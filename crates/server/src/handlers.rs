@@ -14,7 +14,7 @@ use sqlx::{PgPool, QueryBuilder};
 use uuid::Uuid;
 
 use api_types::{
-    InsertMeasurementsRequest, InsertMeasurementsResponse, UploadCameraImageQuery,
+    InsertMeasurementsRequest, InsertMeasurementsResponse, Measurement, UploadCameraImageQuery,
     UploadCameraImageResponse, UpsertSensorRequest, UpsertSensorResponse,
 };
 
@@ -35,17 +35,33 @@ pub(crate) fn bad_request<E: std::fmt::Display>(e: E) -> ApiError {
     (StatusCode::BAD_REQUEST, e.to_string())
 }
 
-/// `POST /sensors` — upsert a sensor and return its internal id plus the latest
-/// measurement time we already hold (so the caller can resume).
+// ── Shared DB helpers ───────────────────────────────────────────────────────
+//
+// The sensor upsert and measurement insert are factored out of their HTTP
+// handlers so the RealiteQ (Topco) webhook can reuse the exact same writes
+// rather than carrying its own SQL. The upsert uses the `query_scalar!` macro
+// (compile-time checked against the `.sqlx` offline cache); the batch insert
+// uses a runtime `QueryBuilder` because the row count is dynamic — same split
+// the handlers already had.
+
+/// Upsert a sensor keyed by `(external_id, provider)` and return its internal
+/// id.
 ///
-/// The SQL here is copied verbatim from the previous scraper so the committed
+/// The SQL is copied verbatim from the original scraper so the committed
 /// `.sqlx` offline cache still matches — do not change the whitespace.
-pub async fn upsert_sensor(
-    State(state): State<AppState>,
-    Json(req): Json<UpsertSensorRequest>,
-) -> Result<Json<UpsertSensorResponse>, ApiError> {
-    let pool = state.pool;
-    let sensor_id: Uuid = sqlx::query_scalar!(
+/// `category` is optional so callers without category metadata (the Topco
+/// webhook) can store `NULL` instead of a placeholder string; the column is
+/// nullable, so both `&str` and `Option<&str>` bind against the cached query.
+async fn upsert_sensor_db(
+    pool: &PgPool,
+    external_id: &str,
+    provider: &str,
+    category: Option<&str>,
+    measurement_unit: Option<&str>,
+    depth_value: Option<f64>,
+    depth_unit: Option<&str>,
+) -> Result<Uuid, ApiError> {
+    let sensor_id = sqlx::query_scalar!(
         r#"
         INSERT INTO sensors (external_id, provider, category, measurement_unit, depth_value, depth_unit)
         VALUES ($1, $2, $3, $4, $5, $6)
@@ -56,16 +72,74 @@ pub async fn upsert_sensor(
             depth_unit = EXCLUDED.depth_unit
         RETURNING sensor_id as "sensor_id!"
         "#,
-        req.external_id,
-        req.provider,
-        req.category,
-        req.measurement_unit,
-        req.depth_value,
-        req.depth_unit,
+        external_id,
+        provider,
+        category,
+        measurement_unit,
+        depth_value,
+        depth_unit,
     )
-    .fetch_one(&pool)
-    .await
-    .map_err(err)?;
+        .fetch_one(pool)
+        .await
+        .map_err(err)?;
+    Ok(sensor_id)
+}
+
+/// Batch-insert measurements for a single sensor, deduping on conflict.
+/// Rows are pushed in 1000-row chunks so each request stays well under the
+/// Postgres parameter limit. Returns the number of rows actually inserted.
+async fn insert_measurements_db(
+    pool: &PgPool,
+    sensor_id: Uuid,
+    measurements: &[Measurement],
+) -> Result<u64, ApiError> {
+    let mut inserted: u64 = 0;
+
+    for chunk in measurements.chunks(1000) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let mut query_builder: QueryBuilder<sqlx::Postgres> =
+            QueryBuilder::new("INSERT INTO measurements (sensor_id, value, measured_at) ");
+
+        query_builder.push_values(chunk, |mut b, m| {
+            b.push_bind(sensor_id)
+                .push_bind(m.value)
+                .push_bind(m.measured_at);
+        });
+
+        query_builder.push(" ON CONFLICT (sensor_id, measured_at) DO NOTHING");
+
+        let result = query_builder.build().execute(pool).await.map_err(err)?;
+        inserted += result.rows_affected();
+    }
+
+    Ok(inserted)
+}
+
+mod topco;
+
+pub use topco::topco_webhook;
+
+// ── HTTP handlers ───────────────────────────────────────────────────────────
+
+/// `POST /sensors` — upsert a sensor and return its internal id plus the latest
+/// measurement time we already hold (so the caller can resume).
+pub async fn upsert_sensor(
+    State(state): State<AppState>,
+    Json(req): Json<UpsertSensorRequest>,
+) -> Result<Json<UpsertSensorResponse>, ApiError> {
+    let pool = state.pool;
+    let sensor_id = upsert_sensor_db(
+        &pool,
+        &req.external_id,
+        &req.provider,
+        Some(req.category.as_str()),
+        req.measurement_unit.as_deref(),
+        req.depth_value,
+        req.depth_unit.as_deref(),
+    )
+    .await?;
 
     let last_measured_at: Option<DateTime<Utc>> = sqlx::query_scalar!(
         r#"
@@ -91,28 +165,7 @@ pub async fn insert_measurements(
     Path(sensor_id): Path<Uuid>,
     Json(body): Json<InsertMeasurementsRequest>,
 ) -> Result<Json<InsertMeasurementsResponse>, ApiError> {
-    let pool = state.pool;
-    let mut inserted: u64 = 0;
-
-    for chunk in body.measurements.chunks(1000) {
-        if chunk.is_empty() {
-            continue;
-        }
-        let mut query_builder: QueryBuilder<sqlx::Postgres> =
-            QueryBuilder::new("INSERT INTO measurements (sensor_id, value, measured_at) ");
-
-        query_builder.push_values(chunk, |mut b, m| {
-            b.push_bind(sensor_id)
-                .push_bind(m.value)
-                .push_bind(m.measured_at);
-        });
-
-        query_builder.push(" ON CONFLICT (sensor_id, measured_at) DO NOTHING");
-
-        let result = query_builder.build().execute(&pool).await.map_err(err)?;
-        inserted += result.rows_affected();
-    }
-
+    let inserted = insert_measurements_db(&state.pool, sensor_id, &body.measurements).await?;
     Ok(Json(InsertMeasurementsResponse { inserted }))
 }
 
@@ -145,12 +198,14 @@ pub async fn upload_camera_image(
     );
     tracing::info!(camera_id = %q.camera_id, %key, "streaming camera image to S3");
 
-    let stream = body
-        .into_data_stream()
-        .map_err(std::io::Error::other);
+    let stream = body.into_data_stream().map_err(std::io::Error::other);
     let mut reader = tokio_util::io::StreamReader::new(stream);
 
-    state.s3.put_object_stream(&mut reader, &key).await.map_err(err)?;
+    state
+        .s3
+        .put_object_stream(&mut reader, &key)
+        .await
+        .map_err(err)?;
 
     Ok(Json(UploadCameraImageResponse {
         bucket: state.s3.name.clone(),

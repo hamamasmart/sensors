@@ -1,13 +1,14 @@
 mod auth;
 mod configuration;
 mod handlers;
+mod logging;
 
 use crate::configuration::Configuration;
 use anyhow::Context;
 use axum::{
     Router,
     http::StatusCode,
-    middleware::from_fn_with_state,
+    middleware::{from_fn, from_fn_with_state},
     routing::{get, post},
 };
 use s3::BucketConfiguration;
@@ -61,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
             post(handlers::insert_measurements),
         )
         .route("/cameras/images", post(handlers::upload_camera_image))
+        .route("/webhooks/topco", post(handlers::topco_webhook))
         .layer(from_fn_with_state(
             auth::ExpectedToken(config.auth_token),
             auth::require_bearer_token,
@@ -73,7 +75,8 @@ async fn main() -> anyhow::Result<()> {
     // shared bearer token.
     let app = Router::new()
         .route("/health", get(|| async { StatusCode::OK }))
-        .merge(api);
+        .merge(api)
+        .layer(from_fn(logging::request_log));
 
     tracing::info!("Listening on http://{}", config.bind_addr);
     let listener = tokio::net::TcpListener::bind(&config.bind_addr)

@@ -15,3 +15,53 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # S3-compatible object storage for local dev. The `server` crate talks to it
+  # exactly like it talks to AWS S3: `rust-s3` reads `AWS_ENDPOINT`
+  # (http://localhost:9000) + `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` /
+  # `AWS_REGION` from `.env` and builds a `Region::Custom`. The server creates
+  # the `hamama-camera-images` bucket itself on first run, so no manual setup
+  # is required — `docker compose up` is enough.
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: phytech-rustfs
+    depends_on:
+      rustfs-volume-init:
+        condition: service_completed_successfully
+    ports:
+      - "9000:9000" # S3 API  — server uses AWS_ENDPOINT=http://localhost:9000
+      - "9001:9001" # web console — browse buckets at http://localhost:9001
+    environment:
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: "0.0.0.0:9000"
+      RUSTFS_CONSOLE_ADDRESS: "0.0.0.0:9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_OBS_LOGGER_LEVEL: info
+      # Single-drive dev setup; bypass the multi-disk erasure check.
+      RUSTFS_UNSAFE_BYPASS_DISK_CHECK: "true"
+      # Accept the virtual-hosted-style requests rust-s3 sends by default
+      # (`<bucket>.localhost`); without this rustfs returns 501 for any
+      # bucket-scoped request.
+      RUSTFS_SERVER_DOMAINS: localhost
+    volumes:
+      - rustfs-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # One-shot: chown the data volume to the rustfs runtime user (10001:10001)
+  # so the main container can write to it. Mirrors the upstream rustfs compose.
+  rustfs-volume-init:
+    image: alpine
+    restart: "no"
+    volumes:
+      - rustfs-data:/data
+    command: chown -R 10001:10001 /data
+
+volumes:
+  rustfs-data:
