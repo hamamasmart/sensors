@@ -2619,6 +2619,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "rust-s3",
+ "serde",
  "sqlx",
  "tokio",
  "tokio-util",

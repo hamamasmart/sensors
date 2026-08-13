@@ -11,6 +11,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 futures = "0.3"
 rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls", "fail-on-err"] }
+serde = { version = "1", features = ["derive"] }
 sqlx = { version = "0.9", features = ["postgres", "migrate", "runtime-tokio", "tls-rustls-ring", "chrono", "uuid"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "net"] }
 tokio-util = { version = "0.7", features = ["io"] }
