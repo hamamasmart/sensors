@@ -13,7 +13,7 @@
 use std::time::Duration;
 
 use api_types::{AnalysisPrompt, AnalysisResult, Measurement, MeasurementValue, ResponseType};
-use futures::future::join_all;
+use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +33,12 @@ const MAX_TRIES: u8 = 3;
 
 /// Path appended to the configured OpenRouter base URL for chat completions.
 const CHAT_COMPLETIONS_PATH: &str = "/chat/completions";
+
+/// Token cap sent on every inference request. The system prompt asks for a
+/// single short value, so a handful of tokens is ample; this bounds the
+/// upstream cost and stops a rambling model early, while the 32-char DB limit
+/// is the authoritative downstream guard on what actually gets stored.
+const MAX_TOKENS: u32 = 16;
 
 /// System instruction for `numeric` prompts. Forces a single numeric reply so
 /// the result is parseable as `f64` and storable in `measurements.value`.
@@ -56,6 +62,7 @@ prose, no markdown, no explanation, no surrounding quotes.";
 struct OpenRouterRequest<'a> {
     model: &'a str,
     messages: Vec<Message<'a>>,
+    max_tokens: u32,
 }
 
 #[derive(Serialize)]
@@ -100,56 +107,67 @@ struct ChoiceMessage {
     content: String,
 }
 
+/// Maximum number of OpenRouter inferences allowed to run at once. Bounds
+/// outbound connections so a large `prompts` array (or several concurrent
+/// uploads) cannot exhaust the connection pool or trip OpenRouter rate limits
+/// — which would then each be retried, compounding the load.
+const INFERENCE_CONCURRENCY: usize = 4;
+
+/// One prompt's inference outcome, paired with its original index so the
+/// `buffer_unordered` results (which arrive out of order) can be sorted back
+/// into input order before storage.
+type IndexedResult = (usize, (AnalysisPrompt, Result<MeasurementValue, String>));
+
 /// Run every prompt against the image at `image_url`, returning one result per
-/// prompt in the input order. Each prompt is inferred independently and
-/// concurrently; failures (after retries) and DB write errors are reported
-/// per-prompt and never abort the batch.
+/// prompt in the input order. Each prompt is inferred independently, with at
+/// most [`INFERENCE_CONCURRENCY`] in flight at once; failures (after retries)
+/// and DB write errors are reported per-prompt and never abort the batch.
+///
+/// `key` is the OpenRouter API key. The caller gates on it being `Some` and
+/// never invokes this function without one, so — unlike the previous shape —
+/// there is no `None` arm here: the invariant is encoded in the `&str` type.
 pub(crate) async fn run_analyses(
     state: &crate::handlers::AppState,
+    key: &str,
     camera_id: &str,
     captured_at: chrono::DateTime<chrono::Utc>,
     image_url: String,
     prompts: Vec<AnalysisPrompt>,
 ) -> Vec<AnalysisResult> {
-    let key = match &state.openrouter_api_key {
-        Some(k) => k.clone(),
-        None => {
-            return prompts
-                .into_iter()
-                .map(|p| AnalysisResult {
-                    prompt_id: p.prompt_id,
-                    value: None,
-                    error: Some("OPENROUTER_API_KEY is not configured".to_string()),
-                })
-                .collect();
-        }
-    };
-
-    let results = join_all(prompts.into_iter().map(|prompt| {
-        let image_url = image_url.clone();
-        let key = key.clone();
-        let base_url = state.openrouter_base_url.clone();
-        async move {
-            let value = infer_with_retries(
-                &state.http,
-                &key,
-                &base_url,
-                &prompt.model,
-                &image_url,
-                &prompt.prompt_text,
-                prompt.response_type,
-            )
+    let n = prompts.len();
+    // `buffer_unordered` caps in-flight inferences at INFERENCE_CONCURRENCY
+    // while still completing as fast as the model allows. The index is carried
+    // through so results can be sorted back into input order before storage.
+    let mut results: Vec<IndexedResult> =
+        stream::iter(prompts.into_iter().enumerate())
+            .map(|(i, prompt)| {
+                let image_url = image_url.clone();
+                let key = key.to_string();
+                let base_url = state.openrouter_base_url.clone();
+                async move {
+                    let value = infer_with_retries(
+                        &state.http,
+                        &key,
+                        &base_url,
+                        &prompt.model,
+                        &image_url,
+                        &prompt.prompt_text,
+                        prompt.response_type,
+                    )
+                    .await;
+                    (i, (prompt, value))
+                }
+            })
+            .buffer_unordered(INFERENCE_CONCURRENCY)
+            .collect()
             .await;
-            (prompt, value)
-        }
-    }))
-    .await;
+    results.sort_by_key(|(i, _)| *i);
 
     // Store each successful inference as a measurement for the
     // `{camera_id}_{prompt_id}` sensor. DB failures are non-fatal and surfaced
     // as the per-prompt `error` rather than aborting the response.
-    let mut analyses = Vec::with_capacity(results.len());
-    for (prompt, value) in results {
+    let mut analyses = Vec::with_capacity(n);
+    for (_, (prompt, value)) in results {
         let result = match value {
             Ok(v) => match store_measurement(state, camera_id, &prompt, v.clone(), captured_at).await {
                 Ok(()) => AnalysisResult {
@@ -209,9 +227,20 @@ async fn store_measurement(
     Ok(())
 }
 
-/// Call OpenRouter up to [`MAX_TRIES`] times, retrying on HTTP errors or content
-/// that does not parse to a usable value. Returns the parsed value or the last
-/// error.
+/// Classification of an inference failure, used to decide whether to retry.
+/// Transient errors (transport failure, 5xx, 429 rate limit, or content that
+/// does not parse to a usable value) may succeed on a later attempt. Permanent
+/// errors — 4xx other than 429 (bad/expired key, bad model slug, quota) — will
+/// fail identically on every retry and surface immediately.
+enum InferError {
+    Transient(String),
+    Permanent(String),
+}
+
+/// Call OpenRouter up to [`MAX_TRIES`] times, retrying only on transient
+/// errors (transport, 5xx, 429, or content that does not parse to a usable
+/// value). Permanent errors surface on the first attempt without wasting
+/// retries or backoff. Returns the parsed value or the last error.
 async fn infer_with_retries(
     http: &Client,
     key: &str,
@@ -225,9 +254,13 @@ async fn infer_with_retries(
     for attempt in 1..=MAX_TRIES {
         match infer_once(http, key, base_url, model, image_url, prompt_text, response_type).await {
             Ok(v) => return Ok(v),
-            Err(e) => {
-                tracing::warn!(attempt, error = %e, "image analysis inference failed, retrying");
-                last_err = e;
+            // A permanent error (e.g. 401 bad key, 400/404 bad model slug) will
+            // not change across retries — surface it now instead of sleeping
+            // through the remaining attempts.
+            Err(InferError::Permanent(msg)) => return Err(msg),
+            Err(InferError::Transient(msg)) => {
+                tracing::warn!(attempt, error = %msg, "image analysis inference failed, retrying");
+                last_err = msg;
                 if attempt < MAX_TRIES {
                     tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
                 }
@@ -238,10 +271,11 @@ async fn infer_with_retries(
 }
 
 /// One OpenRouter inference attempt. Returns the parsed [`MeasurementValue`] or
-/// an error describing why the call or parse failed.
+/// a classified [`InferError`].
 ///
-/// For `numeric` prompts the reply must parse as `f64`; for `text` prompts any
-/// non-empty trimmed reply is accepted (the user's prompt dictates the format).
+/// For `numeric` prompts the reply must parse as a finite `f64`; for `text`
+/// prompts any non-empty trimmed reply is accepted (the user's prompt
+/// dictates the format).
 async fn infer_once(
     http: &Client,
     key: &str,
@@ -250,13 +284,14 @@ async fn infer_once(
     image_url: &str,
     prompt_text: &str,
     response_type: ResponseType,
-) -> Result<MeasurementValue, String> {
+) -> Result<MeasurementValue, InferError> {
     let system_prompt = match response_type {
         ResponseType::Numeric => NUMERIC_SYSTEM_PROMPT,
         ResponseType::Text => TEXT_SYSTEM_PROMPT,
     };
     let body = OpenRouterRequest {
         model,
+        max_tokens: MAX_TOKENS,
         messages: vec![
             Message {
                 role: "system",
@@ -281,39 +316,58 @@ async fn infer_once(
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("request failed: {e}"))?;
+        .map_err(|e| InferError::Transient(format!("request failed: {e}")))?;
 
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!("openrouter returned {status}: {text}"));
+        let err = format!("openrouter returned {status}: {text}");
+        // 429 (rate limit) and any 5xx are transient; any other 4xx (401 bad
+        // key, 400/404 bad model slug, quota) is permanent — retrying won't
+        // change the response.
+        return Err(if status.as_u16() == 429 || status.is_server_error() {
+            InferError::Transient(err)
+        } else {
+            InferError::Permanent(err)
+        });
     }
 
     let parsed: OpenRouterResponse = resp
         .json()
         .await
-        .map_err(|e| format!("failed to decode response: {e}"))?;
+        .map_err(|e| InferError::Transient(format!("failed to decode response: {e}")))?;
 
     let content = parsed
         .choices
         .into_iter()
         .next()
         .map(|c| c.message.content)
-        .ok_or_else(|| "response had no choices".to_string())?;
+        .ok_or_else(|| InferError::Transient("response had no choices".to_string()))?;
 
-    parse_reply(content, response_type)
+    parse_reply(content, response_type).map_err(InferError::Transient)
 }
 
 /// Turn the model's raw reply into a storable [`MeasurementValue`] according to
-/// the prompt's [`ResponseType`]. `numeric` requires a parseable `f64`; `text`
-/// accepts any non-empty trimmed string.
+/// the prompt's [`ResponseType`]. `numeric` requires a parseable, *finite*
+/// `f64` — `str::parse` accepts `"NaN"`/`"inf"`/`"-inf"` as valid `f64`, so a
+/// non-finite parse is rejected explicitly to avoid persisting a value that
+/// would poison Postgres aggregates (`AVG`/`SUM`/`MAX`/`MIN` all return NaN)
+/// and that round-trips as JSON `null`. `text` accepts any non-empty trimmed
+/// string.
 fn parse_reply(content: String, response_type: ResponseType) -> Result<MeasurementValue, String> {
     let trimmed = content.trim();
     match response_type {
-        ResponseType::Numeric => trimmed
-            .parse::<f64>()
-            .map(MeasurementValue::Number)
-            .map_err(|_| format!("model reply is not a number: {trimmed:?}")),
+        ResponseType::Numeric => {
+            let n: f64 = trimmed
+                .parse()
+                .map_err(|_| format!("model reply is not a number: {trimmed:?}"))?;
+            if !n.is_finite() {
+                return Err(format!(
+                    "model reply is not a finite number: {trimmed:?} (NaN/Infinity rejected)"
+                ));
+            }
+            Ok(MeasurementValue::Number(n))
+        }
         ResponseType::Text => {
             if trimmed.is_empty() {
                 Err("model reply was empty".to_string())
@@ -346,7 +400,6 @@ pub(crate) async fn stream_field_to_s3(
     bucket: &s3::Bucket,
     key: &str,
 ) -> Result<(), ApiError> {
-    use futures::StreamExt;
     let mapped = field.map(|res| res.map_err(std::io::Error::other));
     let mut reader = tokio_util::io::StreamReader::new(mapped);
     bucket

@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO sensors (external_id, provider, category, measurement_unit, depth_value, depth_unit, value_type)\n        VALUES ($1, $2, $3, $4, $5, $6, $7::text::sensor_value_type)\n        ON CONFLICT (external_id, provider) DO UPDATE SET\n            category = EXCLUDED.category,\n            measurement_unit = EXCLUDED.measurement_unit,\n            depth_value = EXCLUDED.depth_value,\n            depth_unit = EXCLUDED.depth_unit\n        WHERE sensors.value_type = EXCLUDED.value_type\n        RETURNING sensor_id as \"sensor_id!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sensor_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "sensors",
+            "name": "sensor_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Float8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "094ca3a84a3b3724fe1d8067b4eb8c7ec7440fe1ebe5c7af0e6d1d82d7fa1433"
+}

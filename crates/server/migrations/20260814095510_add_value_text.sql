@@ -10,7 +10,7 @@
 ALTER TABLE measurements ALTER COLUMN value DROP NOT NULL;
 
 -- 2. New text value column.
-ALTER TABLE measurements ADD COLUMN value_text TEXT;
+ALTER TABLE measurements ADD COLUMN value_text VARCHAR(32);
 
 -- 3. A measurement must carry exactly one value.
 ALTER TABLE measurements ADD CONSTRAINT measurements_value_present
@@ -23,5 +23,6 @@ ALTER TABLE measurements ADD CONSTRAINT measurements_value_present
 -- `numeric` since every pre-existing reading is numeric; the upsert rejects a
 -- type change once a sensor exists, so this column never changes for a given
 -- (external_id, provider) sensor.
+CREATE TYPE sensor_value_type AS ENUM ('numeric', 'text');
 
-ALTER TABLE sensors ADD COLUMN value_type TEXT NOT NULL DEFAULT 'numeric';
+ALTER TABLE sensors ADD COLUMN value_type sensor_value_type NOT NULL DEFAULT 'numeric';

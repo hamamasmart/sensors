@@ -13,7 +13,8 @@ use uuid::Uuid;
 
 use api_types::{
     AnalysisPrompt, InsertMeasurementsRequest, InsertMeasurementsResponse, Measurement,
-    UploadCameraImageQuery, UploadCameraImageResponse, UpsertSensorRequest, UpsertSensorResponse,
+    ResponseType, UploadCameraImageQuery, UploadCameraImageResponse, UpsertSensorRequest,
+    UpsertSensorResponse,
 };
 
 /// Shared state handed to every handler via axum's `State` extractor.
@@ -60,6 +61,13 @@ pub(crate) fn bad_request<E: std::fmt::Display>(e: E) -> ApiError {
 /// change its value type once created. `category` is optional so callers
 /// without category metadata (the Topco webhook) store `NULL`.
 ///
+/// `sensors.value_type` is a native Postgres enum (`sensor_value_type`), so the
+/// `&str` argument is cast `$7::text::sensor_value_type`: the inner `::text`
+/// keeps the compile-time-checked macro seeing the parameter as `Text`
+/// (compatible with the `&str` bind), and the outer cast hands Postgres the
+/// enum. `EXCLUDED.value_type` / `sensors.value_type` are already enum-typed, so
+/// the conflict `WHERE` compares them directly.
+///
 /// The SQL uses the compile-time-checked `query_scalar!` macro (validated
 /// against the `.sqlx` offline cache); the whitespace is matched against it.
 #[allow(clippy::too_many_arguments)]
@@ -76,7 +84,7 @@ async fn upsert_sensor_db(
     let sensor_id = match sqlx::query_scalar!(
         r#"
         INSERT INTO sensors (external_id, provider, category, measurement_unit, depth_value, depth_unit, value_type)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::text::sensor_value_type)
         ON CONFLICT (external_id, provider) DO UPDATE SET
             category = EXCLUDED.category,
             measurement_unit = EXCLUDED.measurement_unit,
@@ -101,7 +109,7 @@ async fn upsert_sensor_db(
         // out, meaning the sensor already exists with a different value_type.
         Err(sqlx::Error::RowNotFound) => {
             let existing: Option<String> = sqlx::query_scalar(
-                "SELECT value_type FROM sensors WHERE external_id = $1 AND provider = $2",
+                "SELECT value_type::text FROM sensors WHERE external_id = $1 AND provider = $2",
             )
             .bind(external_id)
             .bind(provider)
@@ -138,6 +146,51 @@ async fn insert_measurements_db(
     measurements: &[Measurement],
 ) -> Result<u64, ApiError> {
     use api_types::MeasurementValue;
+
+    // Enforce the sensor's pinned `value_type` on every inserted measurement.
+    // The upsert pins a sensor to `numeric` or `text` (rejecting a type change
+    // with 409); this mirrors that guard at the measurement level so a
+    // `numeric` sensor can never receive a text value (or vice versa). The old
+    // `Measurement.value: f64` guaranteed numeric at the type level — that
+    // guarantee moved to the untagged enum, so it must be re-imposed here.
+    //
+    // `value_type` is a native enum, so it is cast `::text` here for sqlx to
+    // decode into a `String` (sqlx won't decode a custom enum OID as `String`
+    // directly); `ResponseType::from_db_str` then maps it back to the enum.
+    let sensor_type: Option<String> =
+        sqlx::query_scalar("SELECT value_type::text FROM sensors WHERE sensor_id = $1")
+            .bind(sensor_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(err)?;
+    let sensor_type =
+        sensor_type.ok_or_else(|| (StatusCode::NOT_FOUND, format!("sensor {sensor_id} not found")))?;
+    let expected = ResponseType::from_db_str(&sensor_type).ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("sensor {sensor_id} has unknown value_type {sensor_type:?}"),
+        )
+    })?;
+    for m in measurements {
+        let matches = matches!(
+            (&m.value, expected),
+            (MeasurementValue::Number(_), ResponseType::Numeric)
+                | (MeasurementValue::Text(_), ResponseType::Text)
+        );
+        if !matches {
+            return Err((
+                StatusCode::CONFLICT,
+                format!(
+                    "sensor {sensor_id} is {} but a {} measurement was provided",
+                    expected.as_db_str(),
+                    match &m.value {
+                        MeasurementValue::Number(_) => "numeric",
+                        MeasurementValue::Text(_) => "text",
+                    },
+                ),
+            ));
+        }
+    }
 
     let mut inserted: u64 = 0;
 
@@ -236,8 +289,11 @@ pub async fn insert_measurements(
 ///   - `prompts` (optional) — a JSON array of [`AnalysisPrompt`]. When present,
 ///     each prompt is run against the image through OpenRouter (the image is
 ///     handed to the model as a presigned S3 GET URL, so it is not buffered
-///     here), and the parsed numeric result is stored as a measurement for a
+///     here), and the parsed result is stored as a measurement for a
 ///     `{camera_id}_{prompt_id}` sensor under the `image-analysis` provider.
+///     Analysis runs in a detached `tokio::spawn` task *after* the upload
+///     responds, so inference failures never affect the upload's status and
+///     its results are logged rather than returned.
 ///
 /// The object key is `<camera_id>/YYYY/MM/DD/HH/MM_SS.png`, with every component
 /// taken from `captured_at` in UTC.
@@ -298,26 +354,52 @@ pub async fn upload_camera_image(
         return Err(bad_request("missing required `image` part"));
     }
 
-    // Run analysis only when prompts were provided. The image is fetched by
-    // OpenRouter through a presigned URL, so it is not re-read into memory here.
-    let analyses = match prompts {
-        Some(prompts) if !prompts.is_empty() => {
-            if state.openrouter_api_key.is_none() {
-                return Err((
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "OPENROUTER_API_KEY is not configured".to_string(),
-                ));
-            }
+    // Run analysis in the background so the upload returns as soon as the
+    // image is in S3. Inference results are logged, not returned: the client
+    // does not wait for the vision model, and a slow/hung model no longer
+    // holds the request open (a 30s client timeout bounds the spawned work).
+    // The image is fetched by OpenRouter through a presigned S3 URL, so it is
+    // not re-read into memory here.
+    if let Some(prompts) = prompts.filter(|p| !p.is_empty()) {
+        if let Some(api_key) = &state.openrouter_api_key {
             let image_url = image_analysis::presign_image_url(&state.s3, &key).await?;
-            image_analysis::run_analyses(&state, &q.camera_id, captured_at, image_url, prompts)
-                .await
+            let state = state.clone();
+            let camera_id = q.camera_id.clone();
+            let api_key = api_key.clone();
+            tokio::spawn(async move {
+                let analyses = image_analysis::run_analyses(
+                    &state,
+                    &api_key,
+                    &camera_id,
+                    captured_at,
+                    image_url,
+                    prompts,
+                )
+                .await;
+                for result in &analyses {
+                    match &result.error {
+                        Some(e) => tracing::warn!(
+                            prompt_id = %result.prompt_id,
+                            error = %e,
+                            "image analysis failed",
+                        ),
+                        None => tracing::info!(
+                            prompt_id = %result.prompt_id,
+                            "image analysis stored",
+                        ),
+                    }
+                }
+            });
+        } else {
+            tracing::warn!(
+                camera_id = %q.camera_id,
+                "image uploaded with prompts but OPENROUTER_API_KEY is not configured; analysis skipped",
+            );
         }
-        _ => Vec::new(),
-    };
+    }
 
     Ok(Json(UploadCameraImageResponse {
         bucket: state.s3.name.clone(),
         key,
-        analyses,
     }))
 }

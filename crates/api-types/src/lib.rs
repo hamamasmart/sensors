@@ -85,12 +85,13 @@ pub struct UploadCameraImageQuery {
 }
 
 /// `POST /cameras/images` response — where the uploaded image landed.
+///
+/// Analysis runs in the background after this response is sent, so its
+/// results are not included here; they are logged server-side instead.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UploadCameraImageResponse {
     pub bucket: String,
     pub key: String,
-    /// Per-prompt inference results, empty when no `prompts` part was sent.
-    pub analyses: Vec<AnalysisResult>,
 }
 
 /// A vision-LLM prompt to run against an uploaded camera image. Sent as the
