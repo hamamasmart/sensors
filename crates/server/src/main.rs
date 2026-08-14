@@ -3,10 +3,13 @@ mod configuration;
 mod handlers;
 mod logging;
 
+use std::time::Duration;
+
 use crate::configuration::Configuration;
 use anyhow::Context;
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     http::StatusCode,
     middleware::{from_fn, from_fn_with_state},
     routing::{get, post},
@@ -19,6 +22,12 @@ use tracing_subscriber::EnvFilter;
 /// run if it does not yet exist, so no out-of-band `aws s3api create-bucket` step
 /// is required.
 const S3_BUCKET_NAME: &str = "hamama-camera-images";
+
+/// Per-request body-size cap for `POST /cameras/images`. The `image` part is
+/// streamed to S3 (not held in memory), so a generous limit is safe; 50 MB
+/// covers 4K PNGs while still bounding abusive uploads. Other routes keep
+/// axum's 2 MB default.
+const MAX_IMAGE_BODY_BYTES: usize = 50 * 1024 * 1024;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -47,9 +56,22 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("Failed to set up S3 bucket")?;
 
+    // A single shared outbound HTTP client reused for every OpenRouter call.
+    // A total-request timeout bounds inference so a stalled/hung OpenRouter
+    // response can never hold an upload handler (and its spawned analysis
+    // task) open indefinitely — mirroring the 30s cap the camera-capture
+    // client uses.
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .context("Failed to build HTTP client")?;
+
     let state = handlers::AppState {
         pool,
         s3: bucket,
+        http,
+        openrouter_api_key: config.openrouter_api_key,
+        openrouter_base_url: config.openrouter_base_url,
     };
 
     // Auth-guarded API routes. Every write goes through the bearer-token
@@ -61,7 +83,15 @@ async fn main() -> anyhow::Result<()> {
             "/sensors/{sensor_id}/measurements",
             post(handlers::insert_measurements),
         )
-        .route("/cameras/images", post(handlers::upload_camera_image))
+        // The image part is streamed straight into S3 (never buffered whole),
+        // but the `Multipart` extractor still enforces axum's 2 MB default body
+        // limit, which rejects real camera PNGs (1080p snapshots are 3–6 MB).
+        // Raise it for this route only; other routes keep the safe default.
+        .route(
+            "/cameras/images",
+            post(handlers::upload_camera_image)
+                .layer(DefaultBodyLimit::max(MAX_IMAGE_BODY_BYTES)),
+        )
         .route("/webhooks/topco", post(handlers::topco_webhook))
         .layer(from_fn_with_state(
             auth::ExpectedToken(config.auth_token),

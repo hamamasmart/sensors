@@ -139,7 +139,7 @@ async fn store_topco_changes(pool: &PgPool, changes: &[TopcoValueChange]) -> Res
         let group = groups
             .entry(change.path.clone())
             .or_insert_with(|| (change.measurement_unit.clone(), Vec::new()));
-        group.1.push(Measurement { value, measured_at });
+        group.1.push(Measurement::number(value, measured_at));
     }
 
     for (path, (measurement_unit, measurements)) in groups {
@@ -151,6 +151,7 @@ async fn store_topco_changes(pool: &PgPool, changes: &[TopcoValueChange]) -> Res
             Some(&measurement_unit),
             None,
             None,
+            api_types::ResponseType::Numeric.as_db_str(),
         )
         .await?;
         insert_measurements_db(pool, sensor_id, &measurements).await?;

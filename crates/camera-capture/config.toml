@@ -11,6 +11,19 @@ auth_token = "shared-secret-bearer-token"
 latitude = 32.0853   # Tel Aviv, e.g.
 longitude = 34.7818
 
+# Vision-LLM prompts, defined once by `prompt_id` and referenced from any
+# location via `prompt_ids`. Each becomes a derived sensor
+# `{camera_id}_{prompt_id}` under the `image-analysis` provider on the server.
+# `prompt_id` must be unique across this table. Omit the whole `[[prompts]]`
+# section (or leave a location's `prompt_ids` empty) to store images without
+# analysis.
+[[prompts]]
+prompt_id = "green-cover"
+prompt_text = "What percentage of the frame is green canopy? Reply with a single number."
+model = "google/gemini-2.5-flash" # OpenRouter model slug
+measurement_unit = "%"            # optional
+response_type = "numeric"        # "numeric" (default) or "text"
+
 # Each camera is a PTZ device on the LAN, reached over plain HTTP, and runs on
 # its own cadence with its own daylight window.
 [[cameras]]
@@ -27,3 +40,5 @@ settle_secs = 10.0                # wait after a PTZ move before snapshotting
   pan = 0.0
   tilt = 0.0
   zoom = 0.5
+  prompt_ids = ["green-cover"]    # prompts to run on this location's images
+

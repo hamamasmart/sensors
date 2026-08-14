@@ -5,6 +5,8 @@
 //! same network as the cameras, so camera URIs are plain `http://<lan-ip>:port`
 //! while `server_url` points at the cloud `server`.
 
+use std::collections::HashMap;
+
 use anyhow::Context;
 use serde::Deserialize;
 
@@ -21,6 +23,14 @@ pub struct Configuration {
     /// Site longitude in degrees, [-180, 180]. Shared by every camera that
     /// opts into `daylight_only`.
     pub longitude: f64,
+    /// Vision-LLM prompts defined once by `prompt_id` and referenced from
+    /// locations via `prompt_ids`. Keeping them here (rather than restating the
+    /// same prompt at every site) lets many locations share one prompt. Each
+    /// `prompt_id` must be unique; locations resolve their `prompt_ids` against
+    /// this table at load time. Empty (the default) means no location can opt
+    /// into analysis.
+    #[serde(default)]
+    pub prompts: Vec<api_types::AnalysisPrompt>,
     pub cameras: Vec<CameraConfig>,
 }
 
@@ -93,6 +103,20 @@ pub struct LocationConfig {
     pub tilt: Option<f64>,
     #[serde(default)]
     pub zoom: Option<f64>,
+    /// `prompt_id`s of the top-level `[[prompts]]` to run against this
+    /// location's images on upload. Resolved into [`prompts`] at load time;
+    /// an unknown id fails fast rather than at capture. Empty (the default)
+    /// uploads the image only, with no analysis. Each resolved prompt becomes
+    /// a derived sensor keyed `{camera_id}_{prompt_id}` under the
+    /// `image-analysis` provider.
+    #[serde(default)]
+    pub prompt_ids: Vec<String>,
+    /// The prompts resolved from [`prompt_ids`] against the top-level
+    /// `[[prompts]]` table, populated by `Configuration::validate`. Not read
+    /// from TOML; sent as the `prompts` multipart part (a JSON array of
+    /// `AnalysisPrompt`) on `POST /cameras/images`.
+    #[serde(skip)]
+    pub prompts: Vec<api_types::AnalysisPrompt>,
 }
 
 /// A resolved movement target, derived from a `LocationConfig`.
@@ -132,14 +156,16 @@ impl Configuration {
         let path = std::env::var("CAMERA_CONFIG").unwrap_or_else(|_| "cameras.toml".to_string());
         let contents = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read camera config from {path}"))?;
-        let config: Configuration =
+        let mut config: Configuration =
             toml::from_str(&contents).context("Failed to parse camera config as TOML")?;
         config.validate()?;
         Ok(config)
     }
 
-    /// Cross-field checks that TOML deserialization can't express on its own.
-    fn validate(&self) -> anyhow::Result<()> {
+    /// Cross-field checks that TOML deserialization can't express on its own,
+    /// plus resolution of each location's `prompt_ids` into the prompts sent on
+    /// upload.
+    fn validate(&mut self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.latitude.abs() <= 90.0,
             "latitude must be in [-90, 90], got {}",
@@ -150,6 +176,37 @@ impl Configuration {
             "longitude must be in [-180, 180], got {}",
             self.longitude
         );
+
+        // Index the top-level prompts by prompt_id so locations can reference
+        // them by id. Duplicate ids are ambiguous, so reject them up front.
+        let mut by_id: HashMap<&str, &api_types::AnalysisPrompt> = HashMap::new();
+        for p in &self.prompts {
+            if by_id.insert(p.prompt_id.as_str(), p).is_some() {
+                anyhow::bail!(
+                    "duplicate prompt_id `{}` in top-level [[prompts]]",
+                    p.prompt_id
+                );
+            }
+        }
+
+        // Resolve each location's prompt_ids into the prompts actually sent on
+        // upload. Unknown ids fail fast at load time rather than surfacing as a
+        // missing `prompts` part at capture.
+        for cam in &mut self.cameras {
+            for loc in &mut cam.locations {
+                loc.prompts.clear();
+                for id in &loc.prompt_ids {
+                    let p = by_id.get(id.as_str()).with_context(|| {
+                        format!(
+                            "location `{}` references unknown prompt_id `{}` \
+                             (not defined in any [[prompts]] table)",
+                            loc.camera_id, id
+                        )
+                    })?;
+                    loc.prompts.push((*p).clone());
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -181,7 +238,7 @@ daylight_margin_mins = 15
 
     #[test]
     fn parses_per_camera_daylight_and_interval() {
-        let config: Configuration = toml::from_str(SAMPLE).unwrap();
+        let mut config: Configuration = toml::from_str(SAMPLE).unwrap();
         config.validate().unwrap();
         let cam = &config.cameras[0];
         assert_eq!(cam.interval_secs, 300);
@@ -236,7 +293,163 @@ interval_secs = 60
   tilt = 0.0
   zoom = 0.0
 "#;
-        let config: Configuration = toml::from_str(bad).unwrap();
+        let mut config: Configuration = toml::from_str(bad).unwrap();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn resolves_prompt_ids_to_top_level_prompts() {
+        // Prompts are defined once at the top level and referenced by id from
+        // many locations, instead of restated at each site.
+        let sample = r#"
+server_url = "https://example.test"
+auth_token = "tok"
+latitude = 32.0853
+longitude = 34.7818
+
+[[prompts]]
+prompt_id = "green-cover"
+prompt_text = "What percentage of the frame is green canopy? Reply with a single number."
+model = "google/gemini-2.5-flash"
+measurement_unit = "%"
+
+[[prompts]]
+prompt_id = "color"
+prompt_text = "Reply as `r,g,b`."
+model = "google/gemini-2.5-flash"
+response_type = "text"
+
+[[cameras]]
+uri = "http://192.168.0.226:8080"
+username = "admin"
+password = "admin"
+interval_secs = 300
+
+  [[cameras.locations]]
+  camera_id = "yard-north"
+  pan = 0.0
+  tilt = 0.0
+  zoom = 0.5
+  prompt_ids = ["green-cover", "color"]
+
+  [[cameras.locations]]
+  camera_id = "yard-south"
+  pan = 0.0
+  tilt = 0.0
+  zoom = 0.5
+  prompt_ids = ["green-cover"]
+"#;
+        let mut config: Configuration = toml::from_str(sample).unwrap();
+        config.validate().unwrap();
+
+        let north = &config.cameras[0].locations[0];
+        assert_eq!(north.camera_id, "yard-north");
+        assert_eq!(north.prompts.len(), 2);
+        assert_eq!(north.prompts[0].prompt_id, "green-cover");
+        assert_eq!(north.prompts[0].measurement_unit.as_deref(), Some("%"));
+        assert_eq!(north.prompts[0].response_type, api_types::ResponseType::Numeric);
+        assert_eq!(north.prompts[1].prompt_id, "color");
+        assert!(north.prompts[1].measurement_unit.is_none());
+        assert_eq!(north.prompts[1].response_type, api_types::ResponseType::Text);
+
+        // The second location shares the same `green-cover` prompt without
+        // restating it — the whole point of the indirection.
+        let south = &config.cameras[0].locations[1];
+        assert_eq!(south.prompts.len(), 1);
+        assert_eq!(south.prompts[0].prompt_id, "green-cover");
+    }
+
+    #[test]
+    fn unknown_prompt_id_rejected_at_load() {
+        let sample = r#"
+server_url = "https://example.test"
+auth_token = "tok"
+latitude = 0.0
+longitude = 0.0
+
+[[prompts]]
+prompt_id = "green-cover"
+prompt_text = "x"
+model = "google/gemini-2.5-flash"
+
+[[cameras]]
+uri = "http://x"
+username = "a"
+password = "b"
+interval_secs = 60
+
+  [[cameras.locations]]
+  camera_id = "c"
+  pan = 0.0
+  tilt = 0.0
+  zoom = 0.0
+  prompt_ids = ["missing"]
+"#;
+        let mut config: Configuration = toml::from_str(sample).unwrap();
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("unknown prompt_id `missing`"), "got: {err}");
+        assert!(err.contains("`c`"), "got: {err}");
+    }
+
+    #[test]
+    fn duplicate_prompt_id_rejected_at_load() {
+        let sample = r#"
+server_url = "https://example.test"
+auth_token = "tok"
+latitude = 0.0
+longitude = 0.0
+
+[[prompts]]
+prompt_id = "green-cover"
+prompt_text = "x"
+model = "google/gemini-2.5-flash"
+
+[[prompts]]
+prompt_id = "green-cover"
+prompt_text = "y"
+model = "google/gemini-2.5-flash"
+
+[[cameras]]
+uri = "http://x"
+username = "a"
+password = "b"
+interval_secs = 60
+
+  [[cameras.locations]]
+  camera_id = "c"
+  pan = 0.0
+  tilt = 0.0
+  zoom = 0.0
+"#;
+        let mut config: Configuration = toml::from_str(sample).unwrap();
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("duplicate prompt_id `green-cover`"), "got: {err}");
+    }
+
+    #[test]
+    fn prompts_default_to_empty() {
+        // A location without `prompt_ids` resolves to no prompts — the image
+        // is uploaded without analysis, exactly as before the feature existed.
+        let sample = r#"
+server_url = "https://example.test"
+auth_token = "tok"
+latitude = 0.0
+longitude = 0.0
+
+[[cameras]]
+uri = "http://x"
+username = "a"
+password = "b"
+interval_secs = 60
+
+  [[cameras.locations]]
+  camera_id = "c"
+  pan = 0.0
+  tilt = 0.0
+  zoom = 0.0
+"#;
+        let mut config: Configuration = toml::from_str(sample).unwrap();
+        config.validate().unwrap();
+        assert!(config.cameras[0].locations[0].prompts.is_empty());
     }
 }

@@ -201,6 +201,7 @@ async fn capture_location(
         &loc.camera_id,
         captured_at,
         png,
+        &loc.prompts,
     )
     .await
     .context("upload failed")?;
@@ -208,6 +209,7 @@ async fn capture_location(
     info!(
         camera_id = %loc.camera_id,
         captured_at,
+        prompts = loc.prompts.len(),
         "captured and uploaded image"
     );
     Ok(())
