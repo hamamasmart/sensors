@@ -47,9 +47,15 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("Failed to set up S3 bucket")?;
 
+    // A single shared outbound HTTP client reused for every OpenRouter call.
+    let http = reqwest::Client::new();
+
     let state = handlers::AppState {
         pool,
         s3: bucket,
+        http,
+        openrouter_api_key: config.openrouter_api_key,
+        openrouter_base_url: config.openrouter_base_url,
     };
 
     // Auth-guarded API routes. Every write goes through the bearer-token

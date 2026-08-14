@@ -16,7 +16,8 @@ use tokio::time::{Duration, sleep};
 use tracing::{error, info, warn};
 
 use api_types::{
-    InsertMeasurementsRequest, Measurement, UpsertSensorRequest, UpsertSensorResponse,
+    InsertMeasurementsRequest, Measurement, ResponseType, UpsertSensorRequest,
+    UpsertSensorResponse,
 };
 
 const ISRAEL_STANDARD_TIMEZONE: FixedOffset = FixedOffset::east_opt(2 * 3600).unwrap();
@@ -419,6 +420,7 @@ async fn upsert_sensor(
             measurement_unit: source.measurement_unit.clone(),
             depth_value: source.depth_value,
             depth_unit: source.depth_unit.clone(),
+            value_type: ResponseType::Numeric,
         })
     })
     .await
@@ -498,10 +500,7 @@ async fn scrape_sensor(
     // 1000-row batches so each request stays well under the Postgres parameter limit.
     let new_measurements: Vec<Measurement> = new_measurements
         .iter()
-        .map(|m| Measurement {
-            value: m.value * scale_factor,
-            measured_at: m.time,
-        })
+        .map(|m| Measurement::number(m.value * scale_factor, m.time))
         .collect();
 
     let insert_url = format!("{}/sensors/{}/measurements", server_url, internal_sensor_id);
