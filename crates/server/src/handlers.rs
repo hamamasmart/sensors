@@ -24,8 +24,8 @@ pub struct AppState {
     pub s3: Bucket,
     /// Shared HTTP client for outbound calls (OpenRouter inference).
     pub http: reqwest::Client,
-    /// OpenRouter API key; when `None`, requests that attach `prompts` get `503`.
-    pub openrouter_api_key: Option<String>,
+    /// OpenRouter API key.
+    pub openrouter_api_key: String,
     /// OpenRouter API base URL.
     pub openrouter_base_url: String,
 }
@@ -361,41 +361,34 @@ pub async fn upload_camera_image(
     // The image is fetched by OpenRouter through a presigned S3 URL, so it is
     // not re-read into memory here.
     if let Some(prompts) = prompts.filter(|p| !p.is_empty()) {
-        if let Some(api_key) = &state.openrouter_api_key {
-            let image_url = image_analysis::presign_image_url(&state.s3, &key).await?;
-            let state = state.clone();
-            let camera_id = q.camera_id.clone();
-            let api_key = api_key.clone();
-            tokio::spawn(async move {
-                let analyses = image_analysis::run_analyses(
-                    &state,
-                    &api_key,
-                    &camera_id,
-                    captured_at,
-                    image_url,
-                    prompts,
-                )
-                .await;
-                for result in &analyses {
-                    match &result.error {
-                        Some(e) => tracing::warn!(
-                            prompt_id = %result.prompt_id,
-                            error = %e,
-                            "image analysis failed",
-                        ),
-                        None => tracing::info!(
-                            prompt_id = %result.prompt_id,
-                            "image analysis stored",
-                        ),
-                    }
+        let image_url = image_analysis::presign_image_url(&state.s3, &key).await?;
+        let state = state.clone();
+        let camera_id = q.camera_id.clone();
+        let api_key = state.openrouter_api_key.clone();
+        tokio::spawn(async move {
+            let analyses = image_analysis::run_analyses(
+                &state,
+                &api_key,
+                &camera_id,
+                captured_at,
+                image_url,
+                prompts,
+            )
+            .await;
+            for result in &analyses {
+                match &result.error {
+                    Some(e) => tracing::warn!(
+                        prompt_id = %result.prompt_id,
+                        error = %e,
+                        "image analysis failed",
+                    ),
+                    None => tracing::info!(
+                        prompt_id = %result.prompt_id,
+                        "image analysis stored",
+                    ),
                 }
-            });
-        } else {
-            tracing::warn!(
-                camera_id = %q.camera_id,
-                "image uploaded with prompts but OPENROUTER_API_KEY is not configured; analysis skipped",
-            );
-        }
+            }
+        });
     }
 
     Ok(Json(UploadCameraImageResponse {

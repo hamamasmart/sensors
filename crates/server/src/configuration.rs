@@ -8,10 +8,8 @@ pub struct Configuration {
     /// Shared secret that callers must present as `Authorization: Bearer <token>`
     /// to reach any route. Required so routes are never exposed unauthenticated.
     pub auth_token: String,
-    /// OpenRouter API key used for image-analysis inference. Optional: when
-    /// unset, requests that attach `prompts` are rejected with `503`, while
-    /// plain image uploads still succeed.
-    pub openrouter_api_key: Option<String>,
+    /// OpenRouter API key used for image-analysis inference.
+    pub openrouter_api_key: String,
     /// OpenRouter API base URL. Defaults to the public endpoint; overridable to
     /// point at an OpenRouter-compatible gateway or a local stub.
     pub openrouter_base_url: String,
@@ -25,11 +23,15 @@ impl Configuration {
             std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
         let auth_token =
             std::env::var("AUTH_TOKEN").context("AUTH_TOKEN is not set")?;
-        // An empty `OPENROUTER_API_KEY=` is treated as unset so requests that
-        // attach prompts get a clear `503` instead of sending an empty bearer.
+        // An empty `OPENROUTER_API_KEY=` is rejected the same as unset so a
+        // misconfigured deploy fails to start rather than silently accepting
+        // prompt-bearing uploads it can't analyze.
         let openrouter_api_key = std::env::var("OPENROUTER_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty());
+            .context("OPENROUTER_API_KEY is not set")?;
+        anyhow::ensure!(
+            !openrouter_api_key.trim().is_empty(),
+            "OPENROUTER_API_KEY is set but empty"
+        );
         let openrouter_base_url = std::env::var("OPENROUTER_BASE_URL")
             .unwrap_or_else(|_| "https://openrouter.ai/api/v1".to_string());
 

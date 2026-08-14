@@ -63,6 +63,12 @@ Parameters:
     Type: String
     Description: Phytech account password used by the scraper.
     NoEcho: true
+  OpenRouterApiKey:
+    Type: String
+    Description: >
+      OpenRouter API key for the vision-LLM image-analysis endpoint the server
+      calls on prompt-bearing camera uploads.
+    NoEcho: true
 
 Conditions:
   # True when a real image URI was supplied (i.e. not the bootstrap deploy).
@@ -130,6 +136,8 @@ Resources:
                     Value: !GetAtt S3UploaderKey.SecretAccessKey
                   - Variable: AWS_REGION
                     Value: !Ref AWS::Region
+                  - Variable: OPENROUTER_API_KEY
+                    Value: !Ref OpenRouterApiKey
                   - Variable: BIND_ADDR
                     Value: 0.0.0.0:8080
             PublicEndpoint:

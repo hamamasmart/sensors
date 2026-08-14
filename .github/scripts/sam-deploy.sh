@@ -11,9 +11,9 @@
 #        deployment). The real image URI on every later deploy.
 #
 # Secrets arrive via env vars (DATABASE_URL, AUTH_TOKEN, PHYTECH_EMAIL,
-# PHYTECH_PASSWORD) rather than argv so values with shell metacharacters don't
-# break sam's parameter parsing. Also reads AWS_REGION and SAM_BUCKET from the
-# environment (set by configure-aws-credentials and ensure-sam-bucket.sh).
+# PHYTECH_PASSWORD, OPENROUTER_API_KEY) rather than argv so values with shell
+# metacharacters don't break sam's parameter parsing. Also reads AWS_REGION and SAM_BUCKET from the environment
+# (set by configure-aws-credentials and ensure-sam-bucket.sh).
 set -euo pipefail
 
 image_uri="${1:-}"
@@ -41,4 +41,5 @@ sam deploy \
     DatabaseUrl="${DATABASE_URL}" \
     AuthToken="${AUTH_TOKEN}" \
     PhytechEmail="${PHYTECH_EMAIL}" \
-    PhytechPassword="${PHYTECH_PASSWORD}"
+    PhytechPassword="${PHYTECH_PASSWORD}" \
+    OpenRouterApiKey="${OPENROUTER_API_KEY}"

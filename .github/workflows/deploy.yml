@@ -28,6 +28,7 @@ name: Deploy (server to Lightsail, scraper to Lambda)
 #   DATABASE_URL      - postgres connection string for the server
 #   AUTH_TOKEN        - shared bearer token (server checks it, scraper sends it)
 #   PHYTECH_EMAIL, PHYTECH_PASSWORD
+#   OPENROUTER_API_KEY  - OpenRouter key for vision-LLM image-analysis
 # Required GitHub vars:
 #   AWS_REGION          - must match the camera-images bucket's region (eu-north-1)
 
@@ -47,6 +48,7 @@ jobs:
       AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
       PHYTECH_EMAIL: ${{ secrets.PHYTECH_EMAIL }}
       PHYTECH_PASSWORD: ${{ secrets.PHYTECH_PASSWORD }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     steps:
       - uses: actions/checkout@v7
 
