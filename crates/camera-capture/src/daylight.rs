@@ -31,8 +31,17 @@ pub fn is_daylight(
     let date = NaiveDate::from_ymd_opt(now.year(), now.month(), now.day())
         .expect("valid date constructed from a DateTime");
     let day = SolarDay::new(coord, date);
-    let sunrise = day.event_time(SolarEvent::Sunrise);
-    let sunset = day.event_time(SolarEvent::Sunset);
+
+    // FIXME: use is_day when merged to `sunrise` crate (https://github.com/nathan-osman/rust-sunrise/pull/22)
+    // currently we treat polar days always as night which is wrong...
+    let sunrise = match day.event_time(SolarEvent::Sunrise) {
+        Some(t) => t,
+        None => return false,
+    };
+    let sunset = match day.event_time(SolarEvent::Sunset) {
+        Some(t) => t,
+        None => return false,
+    };
 
     let margin = chrono::Duration::minutes(margin_mins);
     now >= sunrise + margin && now <= sunset - margin
@@ -74,7 +83,9 @@ mod tests {
         // a 60-minute margin pushes the start past it.
         let coord = coord();
         let date = NaiveDate::from_ymd_opt(2024, 6, 21).unwrap();
-        let sunrise = SolarDay::new(coord, date).event_time(SolarEvent::Sunrise);
+        let sunrise = SolarDay::new(coord, date)
+            .event_time(SolarEvent::Sunrise)
+            .expect("sunrise at mid-latitude");
 
         assert!(is_daylight(true, 0, coord, sunrise));
         assert!(!is_daylight(true, 60, coord, sunrise));

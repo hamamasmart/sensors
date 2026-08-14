@@ -96,7 +96,7 @@ pub struct UploadCameraImageResponse {
 
 /// A vision-LLM prompt to run against an uploaded camera image. Sent as the
 /// `prompts` multipart part (a JSON array of these) on `POST /cameras/images`.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AnalysisPrompt {
     pub prompt_id: String,
     pub prompt_text: String,
