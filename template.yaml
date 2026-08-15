@@ -93,6 +93,7 @@ Resources:
                 Action:
                   - s3:CreateBucket
                   - s3:PutObject
+                  - s3:GetObject
                   - s3:AbortMultipartUpload
                 Resource:
                   - !Sub "arn:aws:s3:::hamama-camera-images"
