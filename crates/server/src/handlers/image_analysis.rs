@@ -34,12 +34,6 @@ const MAX_TRIES: u8 = 3;
 /// Path appended to the configured OpenRouter base URL for chat completions.
 const CHAT_COMPLETIONS_PATH: &str = "/chat/completions";
 
-/// Token cap sent on every inference request. The system prompt asks for a
-/// single short value, so a handful of tokens is ample; this bounds the
-/// upstream cost and stops a rambling model early, while the 32-char DB limit
-/// is the authoritative downstream guard on what actually gets stored.
-const MAX_TOKENS: u32 = 32;
-
 /// System instruction for `numeric` prompts. Forces a single numeric reply so
 /// the result is parseable as `f64` and storable in `measurements.value`.
 const NUMERIC_SYSTEM_PROMPT: &str = "\
@@ -62,13 +56,6 @@ prose, no markdown, no explanation, no surrounding quotes.";
 struct OpenRouterRequest<'a> {
     model: &'a str,
     messages: Vec<Message<'a>>,
-    max_tokens: u32,
-    reasoning: Reasoning,
-}
-
-#[derive(Serialize)]
-struct Reasoning {
-    enabled: bool,
 }
 
 #[derive(Serialize)]
@@ -297,8 +284,6 @@ async fn infer_once(
     };
     let body = OpenRouterRequest {
         model,
-        max_tokens: MAX_TOKENS,
-        reasoning: Reasoning { enabled: false },
         messages: vec![
             Message {
                 role: "system",
