@@ -83,6 +83,7 @@ enum ContentPart<'a> {
 #[derive(Serialize)]
 struct ImageUrl<'a> {
     url: &'a str,
+    detail: &'static str,
 }
 
 #[derive(Deserialize)]
@@ -294,7 +295,10 @@ async fn infer_once(
                 content: MessageContent::Parts(vec![
                     ContentPart::Text { text: prompt_text },
                     ContentPart::ImageUrl {
-                        image_url: ImageUrl { url: image_url },
+                        image_url: ImageUrl {
+                            url: image_url,
+                            detail: "original",
+                        },
                     },
                 ]),
             },
