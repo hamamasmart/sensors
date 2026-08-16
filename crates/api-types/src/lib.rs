@@ -109,6 +109,14 @@ pub struct AnalysisPrompt {
     /// a single short value with no prose/markdown. Defaults to `numeric`.
     #[serde(default)]
     pub response_type: ResponseType,
+    /// When true, the most recent prior measurements for this
+    /// `{camera_id}_{prompt_id}` sensor are fetched and attached to the prompt
+    /// as an extra text content part — each prior value with its measurement
+    /// time, plus the current analysis datetime — so the model can reason over
+    /// the sensor's history. No context part is added when there is no history
+    /// yet (first run) or when this is false. Defaults to `false`.
+    #[serde(default)]
+    pub include_previous_results: bool,
 }
 
 /// Kind of value an analysis prompt expects back from the model, which selects
@@ -143,14 +151,4 @@ impl ResponseType {
             _ => None,
         }
     }
-}
-
-/// Result of running one [`AnalysisPrompt`] against an uploaded image. `value`
-/// is `None` with `error` set when the model could not be made to return a
-/// usable value (after retries) or the measurement could not be stored.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct AnalysisResult {
-    pub prompt_id: String,
-    pub value: Option<MeasurementValue>,
-    pub error: Option<String>,
 }
