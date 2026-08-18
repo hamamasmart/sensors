@@ -28,6 +28,13 @@ use tracing::{Level, error, info, warn};
 
 use crate::configuration::{CameraConfig, Configuration};
 
+/// Wall-clock cap on a single RTSP frame capture. `rtsp_snapshot` already sets a
+/// 5 s socket read timeout, but `ffmpeg`'s stream-open (TCP connect / RTSP
+/// handshake) is not bounded by it — a half-open connection can hang the
+/// `spawn_blocking` task indefinitely, which blocks the whole camera loop. Capping it bounds that to a
+/// single tick so the loop can fail fast and retry next interval.
+const RTSP_CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
@@ -179,6 +186,9 @@ async fn capture_location(
 ) -> anyhow::Result<()> {
     let target = loc.target()?;
 
+    // `move_to` primes the camera's lazy preset table via `GetPresets` on a
+    // failed `GotoPreset`, healing the post-reboot `400 "preset token does not
+    // exist."` wedge on the first attempt.
     clients.move_to(&target).await?;
     sleep(settle).await;
 
@@ -187,9 +197,27 @@ async fn capture_location(
     let stream_uri = clients.stream_uri().await?;
     let rtsp_url = inject_credentials(&stream_uri, &creds.username, &creds.password)?;
 
+    // Bound the blocking ffmpeg call so a dead/half-open camera can't hang the
+    // loop (see `RTSP_CAPTURE_TIMEOUT`). On timeout the `spawn_blocking` task
+    // keeps running to completion on the blocking pool — acceptable: it's rare,
+    // and ffmpeg's own 5 s socket timeout will release the thread once the
+    // stalled I/O errors out.
     let rtsp_url_clone = rtsp_url.clone();
-    let png = tokio::task::spawn_blocking(move || rtsp_snapshot::capture_frame_png(&rtsp_url_clone))
-        .await
+    let capture =
+        tokio::task::spawn_blocking(move || rtsp_snapshot::capture_frame_png(&rtsp_url_clone));
+    // `tokio::time::timeout` wraps the join handle one layer; on timeout the
+    // `spawn_blocking` task is NOT cancelled (it keeps running on the blocking
+    // pool), but the async task unblocks so the loop fails fast.
+    let join = match tokio::time::timeout(RTSP_CAPTURE_TIMEOUT, capture).await {
+        Ok(j) => j,
+        Err(_) => {
+            anyhow::bail!(
+                "RTSP frame capture timed out after {RTSP_CAPTURE_TIMEOUT:?} \
+                 (camera unresponsive?)"
+            );
+        }
+    };
+    let png = join
         .context("spawn_blocking failed")?
         .context("RTSP frame capture failed")?;
 
