@@ -10,14 +10,12 @@ use anyhow::Context;
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
 use futures::StreamExt;
 use reqwest::{StatusCode, header};
-use serde::{Deserialize, Deserializer};
-use serde::de::Error;
+use serde::{Deserialize, Deserializer, de::Error};
 use tokio::time::{Duration, sleep};
 use tracing::{error, info, warn};
 
 use api_types::{
-    InsertMeasurementsRequest, Measurement, ResponseType, UpsertSensorRequest,
-    UpsertSensorResponse,
+    InsertMeasurementsRequest, Measurement, ResponseType, UpsertSensorRequest, UpsertSensorResponse,
 };
 
 const ISRAEL_STANDARD_TIMEZONE: FixedOffset = FixedOffset::east_opt(2 * 3600).unwrap();
@@ -105,8 +103,9 @@ fn deserialize_israel_standard_time_milliseconds<'de, D: Deserializer<'de>>(
     let naive_time = DateTime::from_timestamp_millis(milliseconds)
         .ok_or(D::Error::custom("Invalid timestamp"))?
         .naive_utc();
-    let ist_time: DateTime<FixedOffset> =
-        ISRAEL_STANDARD_TIMEZONE.from_local_datetime(&naive_time).unwrap();
+    let ist_time: DateTime<FixedOffset> = ISRAEL_STANDARD_TIMEZONE
+        .from_local_datetime(&naive_time)
+        .unwrap();
     Ok(ist_time.with_timezone(&Utc))
 }
 
@@ -261,9 +260,7 @@ pub async fn run_scrape(
         .context("Failed to build HTTP client")?;
 
     for project in &projects {
-        if let Err(e) =
-            scrape_project(&jwt_client, &server_client, server_url, project.id).await
-        {
+        if let Err(e) = scrape_project(&jwt_client, &server_client, server_url, project.id).await {
             error!(project_id = project.id, "Failed to scrape project: {:?}", e);
         }
     }
@@ -310,9 +307,15 @@ async fn scrape_project(
         let sensor_id = source.sensor_id.clone().unwrap();
         let base_url = url.clone();
         async move {
-            if let Err(e) =
-                scrape_sensor(client, server_client, server_url, &base_url, source, &sensor_id)
-                    .await
+            if let Err(e) = scrape_sensor(
+                client,
+                server_client,
+                server_url,
+                &base_url,
+                source,
+                &sensor_id,
+            )
+            .await
             {
                 warn!(sensor_id, "Failed to scrape sensor after retries: {:?}", e);
             }
@@ -369,10 +372,12 @@ async fn send_with_retry(
     let mut attempt = 0;
     loop {
         attempt += 1;
-        let resp = build().send().await.context("Failed to send server request")?;
+        let resp = build()
+            .send()
+            .await
+            .context("Failed to send server request")?;
         let status = resp.status();
-        let retryable =
-            status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
+        let retryable = status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
         if retryable && attempt < SERVER_MAX_ATTEMPTS {
             let delay = backoff_delay(attempt, resp.headers().get(header::RETRY_AFTER));
             // Drain the body so the connection can be reused by the next attempt.
@@ -386,9 +391,7 @@ async fn send_with_retry(
             sleep(delay).await;
             continue;
         }
-        return resp
-            .error_for_status()
-            .context("Server rejected request");
+        return resp.error_for_status().context("Server rejected request");
     }
 }
 
@@ -413,15 +416,17 @@ async fn upsert_sensor(
     sensor_id: &str,
 ) -> anyhow::Result<UpsertSensorResponse> {
     let resp = send_with_retry(|| {
-        server_client.post(format!("{}/sensors", server_url)).json(&UpsertSensorRequest {
-            external_id: sensor_id.to_string(),
-            provider: "phytech".to_string(),
-            category: source.category.clone(),
-            measurement_unit: source.measurement_unit.clone(),
-            depth_value: source.depth_value,
-            depth_unit: source.depth_unit.clone(),
-            value_type: ResponseType::Numeric,
-        })
+        server_client
+            .post(format!("{}/sensors", server_url))
+            .json(&UpsertSensorRequest {
+                external_id: sensor_id.to_string(),
+                provider: "phytech".to_string(),
+                category: source.category.clone(),
+                measurement_unit: source.measurement_unit.clone(),
+                depth_value: source.depth_value,
+                depth_unit: source.depth_unit.clone(),
+                value_type: ResponseType::Numeric,
+            })
     })
     .await
     .context("Server rejected sensor upsert")?
@@ -506,9 +511,11 @@ async fn scrape_sensor(
     let insert_url = format!("{}/sensors/{}/measurements", server_url, internal_sensor_id);
     for chunk in new_measurements.chunks(1000) {
         let response = send_with_retry(|| {
-            server_client.post(&insert_url).json(&InsertMeasurementsRequest {
-                measurements: chunk.to_vec(),
-            })
+            server_client
+                .post(&insert_url)
+                .json(&InsertMeasurementsRequest {
+                    measurements: chunk.to_vec(),
+                })
         })
         .await
         .context("Server rejected measurements insert")?;

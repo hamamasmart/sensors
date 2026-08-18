@@ -26,7 +26,6 @@ use super::{ApiError, bad_request, insert_measurements_db, upsert_sensor_db};
 /// Stored as plain text alongside the existing `phytech` / `tera` providers.
 const TOPCO_PROVIDER: &str = "topco";
 
-
 /// A single RealiteQ node value change. The same fields arrive whether the
 /// change is sent on its own (unbuffered mode, form-urlencoded) or batched in an
 /// array (buffered mode, JSON), so one `Deserialize` type covers both.
@@ -129,12 +128,13 @@ async fn store_topco_changes(pool: &PgPool, changes: &[TopcoValueChange]) -> Res
             continue;
         };
 
-        let measured_at = DateTime::<Utc>::from_timestamp(change.raw_stamp, 0).ok_or_else(|| {
-            bad_request(format!(
-                "raw_stamp is not a valid epoch timestamp: {}",
-                change.raw_stamp
-            ))
-        })?;
+        let measured_at =
+            DateTime::<Utc>::from_timestamp(change.raw_stamp, 0).ok_or_else(|| {
+                bad_request(format!(
+                    "raw_stamp is not a valid epoch timestamp: {}",
+                    change.raw_stamp
+                ))
+            })?;
 
         let group = groups
             .entry(change.path.clone())
@@ -168,7 +168,7 @@ async fn store_topco_changes(pool: &PgPool, changes: &[TopcoValueChange]) -> Res
 /// when nothing numeric can be extracted, in which case the caller skips it.
 fn parse_topco_value(change: &TopcoValueChange) -> Option<f64> {
     if change.unformatted_value.is_empty() {
-        return None
+        return None;
     }
     let raw = &change.unformatted_value;
     match change.datatype.as_str() {

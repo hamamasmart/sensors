@@ -230,7 +230,9 @@ async fn store_measurement(
         .map_err(|e| anyhow::anyhow!("insert measurements failed: {} {}", e.0, e.1))?;
 
     if inserted == 0 {
-        anyhow::bail!("image analysis measurement not stored: a row for this sensor at captured_at already exists");
+        anyhow::bail!(
+            "image analysis measurement not stored: a row for this sensor at captured_at already exists"
+        );
     }
 
     Ok(())
@@ -478,7 +480,9 @@ fn parse_reply(content: String, response_type: ResponseType) -> anyhow::Result<M
                 .parse()
                 .with_context(|| format!("model reply is not a number: {trimmed:?}"))?;
             if !n.is_finite() {
-                anyhow::bail!("model reply is not a finite number: {trimmed:?} (NaN/Infinity rejected)");
+                anyhow::bail!(
+                    "model reply is not a finite number: {trimmed:?} (NaN/Infinity rejected)"
+                );
             }
             Ok(MeasurementValue::Number(n))
         }

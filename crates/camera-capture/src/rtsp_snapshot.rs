@@ -15,12 +15,14 @@
 use anyhow::Context;
 use ffmpeg_next as ffmpeg;
 
-use ffmpeg::codec::Context as CodecContext;
-use ffmpeg::format::{Pixel, input_with_dictionary};
-use ffmpeg::media::Type;
-use ffmpeg::software::scaling::Context as Scaler;
-use ffmpeg::util::frame::video::Video;
-use ffmpeg::Dictionary;
+use ffmpeg::{
+    Dictionary,
+    codec::Context as CodecContext,
+    format::{Pixel, input_with_dictionary},
+    media::Type,
+    software::scaling::Context as Scaler,
+    util::frame::video::Video,
+};
 
 /// Upper bound on how long we'll wait for the stream to produce a frame, in
 /// microseconds. Applied as the RTSP socket read timeout (`stimeout`).

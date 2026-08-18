@@ -10,8 +10,10 @@ use url::Url;
 
 use onvif::soap::client::{AuthType, Client, ClientBuilder, Credentials};
 
-use schema::devicemgmt::{self, GetServices};
-use schema::onvif::ReferenceToken;
+use schema::{
+    devicemgmt::{self, GetServices},
+    onvif::ReferenceToken,
+};
 
 use crate::configuration::{CameraConfig, LocationTarget};
 

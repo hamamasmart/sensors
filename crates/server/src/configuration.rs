@@ -17,17 +17,14 @@ pub struct Configuration {
 
 impl Configuration {
     pub fn from_env() -> anyhow::Result<Self> {
-        let database_url =
-            std::env::var("DATABASE_URL").context("DATABASE_URL is not set")?;
-        let bind_addr =
-            std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-        let auth_token =
-            std::env::var("AUTH_TOKEN").context("AUTH_TOKEN is not set")?;
+        let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL is not set")?;
+        let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+        let auth_token = std::env::var("AUTH_TOKEN").context("AUTH_TOKEN is not set")?;
         // An empty `OPENROUTER_API_KEY=` is rejected the same as unset so a
         // misconfigured deploy fails to start rather than silently accepting
         // prompt-bearing uploads it can't analyze.
-        let openrouter_api_key = std::env::var("OPENROUTER_API_KEY")
-            .context("OPENROUTER_API_KEY is not set")?;
+        let openrouter_api_key =
+            std::env::var("OPENROUTER_API_KEY").context("OPENROUTER_API_KEY is not set")?;
         anyhow::ensure!(
             !openrouter_api_key.trim().is_empty(),
             "OPENROUTER_API_KEY is set but empty"
