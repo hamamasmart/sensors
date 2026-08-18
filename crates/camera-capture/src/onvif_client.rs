@@ -32,25 +32,41 @@ impl CameraClients {
             .ptz
             .as_ref()
             .context("camera advertises no PTZ service but a location requires movement")?;
-        let profile_token = ReferenceToken(self.profile_token.clone());
         match target {
             LocationTarget::Preset { preset } => {
-                schema::ptz::goto_preset(
-                    ptz,
-                    &schema::ptz::GotoPreset {
-                        profile_token,
-                        preset_token: ReferenceToken(preset.clone()),
-                        speed: None,
-                    },
-                )
-                .await
-                .context("GotoPreset failed")?;
+                // Asecam cameras lazily materializes its preset table and
+                // `GotoPreset` does NOT trigger that load — it just checks a
+                // not-yet-populated table and returns
+                // `400 "The requested preset token does not exist."` for valid
+                // presets. A single `GetPresets` call primes/loads the table. So on a
+                // failed goto we prime then retry; a persistent failure
+                // (genuine bad token, or PTZ service down) still propagates and
+                // fails this tick, to be retried on the next interval.
+                let build_req = || schema::ptz::GotoPreset {
+                    profile_token: ReferenceToken(self.profile_token.clone()),
+                    preset_token: ReferenceToken(preset.clone()),
+                    speed: None,
+                };
+                if schema::ptz::goto_preset(ptz, &build_req()).await.is_err() {
+                    // Prime the lazy preset table. Best-effort: a failure here
+                    // is swallowed and the retry below surfaces the real error.
+                    let _ = schema::ptz::get_presets(
+                        ptz,
+                        &schema::ptz::GetPresets {
+                            profile_token: ReferenceToken(self.profile_token.clone()),
+                        },
+                    )
+                    .await;
+                    schema::ptz::goto_preset(ptz, &build_req())
+                        .await
+                        .context("GotoPreset failed")?;
+                }
             }
             LocationTarget::Absolute { pan, tilt, zoom } => {
                 schema::ptz::absolute_move(
                     ptz,
                     &schema::ptz::AbsoluteMove {
-                        profile_token,
+                        profile_token: ReferenceToken(self.profile_token.clone()),
                         position: schema::onvif::Ptzvector {
                             pan_tilt: Some(schema::onvif::Vector2D {
                                 x: *pan,
