@@ -366,7 +366,7 @@ pub async fn upload_camera_image(
         let camera_id = q.camera_id.clone();
         let api_key = state.openrouter_api_key.clone();
         tokio::spawn(async move {
-            let analyses = image_analysis::run_analyses(
+            image_analysis::run_analyses(
                 &state,
                 &api_key,
                 &camera_id,
@@ -375,19 +375,6 @@ pub async fn upload_camera_image(
                 prompts,
             )
             .await;
-            for result in &analyses {
-                match &result.error {
-                    Some(e) => tracing::warn!(
-                        prompt_id = %result.prompt_id,
-                        error = %e,
-                        "image analysis failed",
-                    ),
-                    None => tracing::info!(
-                        prompt_id = %result.prompt_id,
-                        "image analysis stored",
-                    ),
-                }
-            }
         });
     }
 
