@@ -1,0 +1,7 @@
+# rustfmt config.
+#
+# `imports_granularity` is an unstable rustfmt option, so `cargo fmt` /
+# `cargo fmt --check` must run on a nightly toolchain (CI's rustfmt job uses
+# dtolnay/rust-toolchain@nightly). Stable rustfmt silently ignores it.
+unstable_features = true
+imports_granularity = "Crate"

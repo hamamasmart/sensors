@@ -347,10 +347,16 @@ interval_secs = 300
         assert_eq!(north.prompts.len(), 2);
         assert_eq!(north.prompts[0].prompt_id, "green-cover");
         assert_eq!(north.prompts[0].measurement_unit.as_deref(), Some("%"));
-        assert_eq!(north.prompts[0].response_type, api_types::ResponseType::Numeric);
+        assert_eq!(
+            north.prompts[0].response_type,
+            api_types::ResponseType::Numeric
+        );
         assert_eq!(north.prompts[1].prompt_id, "color");
         assert!(north.prompts[1].measurement_unit.is_none());
-        assert_eq!(north.prompts[1].response_type, api_types::ResponseType::Text);
+        assert_eq!(
+            north.prompts[1].response_type,
+            api_types::ResponseType::Text
+        );
 
         // The second location shares the same `green-cover` prompt without
         // restating it — the whole point of the indirection.
@@ -423,7 +429,10 @@ interval_secs = 60
 "#;
         let mut config: Configuration = toml::from_str(sample).unwrap();
         let err = config.validate().unwrap_err().to_string();
-        assert!(err.contains("duplicate prompt_id `green-cover`"), "got: {err}");
+        assert!(
+            err.contains("duplicate prompt_id `green-cover`"),
+            "got: {err}"
+        );
     }
 
     #[test]

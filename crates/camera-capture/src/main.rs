@@ -116,7 +116,12 @@ async fn camera_loop(
         // Skip the whole pass while it's dark: no ONVIF moves, no snapshots,
         // no uploads. We still honour `interval_secs`, so the loop wakes up
         // every tick and self-corrects as the sun crosses the horizon.
-        if daylight::is_daylight(cam.daylight_only, cam.daylight_margin_mins, coords, Utc::now()) {
+        if daylight::is_daylight(
+            cam.daylight_only,
+            cam.daylight_margin_mins,
+            coords,
+            Utc::now(),
+        ) {
             if dark {
                 info!(camera = %cam.uri, "resuming capture: entered daylight hours");
                 dark = false;

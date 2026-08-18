@@ -10,14 +10,11 @@ pub struct Configuration {
 
 impl Configuration {
     pub fn from_env() -> anyhow::Result<Self> {
-        let server_url =
-            std::env::var("SERVER_URL").context("SERVER_URL is not set")?;
-        let phytech_email =
-            std::env::var("PHYTECH_EMAIL").context("PHYTECH_EMAIL is not set")?;
+        let server_url = std::env::var("SERVER_URL").context("SERVER_URL is not set")?;
+        let phytech_email = std::env::var("PHYTECH_EMAIL").context("PHYTECH_EMAIL is not set")?;
         let phytech_password =
             std::env::var("PHYTECH_PASSWORD").context("PHYTECH_PASSWORD is not set")?;
-        let server_auth_token =
-            std::env::var("AUTH_TOKEN").context("AUTH_TOKEN is not set")?;
+        let server_auth_token = std::env::var("AUTH_TOKEN").context("AUTH_TOKEN is not set")?;
 
         Ok(Self {
             server_url,

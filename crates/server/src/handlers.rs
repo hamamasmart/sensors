@@ -1,9 +1,8 @@
 //! HTTP route handlers. All DB writes live here so the scraper can stay DB-less.
 
-use axum::extract::{Multipart, Query};
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Multipart, Path, Query, State},
     http::StatusCode,
 };
 use chrono::{DateTime, Utc};
@@ -163,8 +162,12 @@ async fn insert_measurements_db(
             .fetch_optional(pool)
             .await
             .map_err(err)?;
-    let sensor_type =
-        sensor_type.ok_or_else(|| (StatusCode::NOT_FOUND, format!("sensor {sensor_id} not found")))?;
+    let sensor_type = sensor_type.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("sensor {sensor_id} not found"),
+        )
+    })?;
     let expected = ResponseType::from_db_str(&sensor_type).ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -198,8 +201,9 @@ async fn insert_measurements_db(
         if chunk.is_empty() {
             continue;
         }
-        let mut query_builder: QueryBuilder<sqlx::Postgres> =
-            QueryBuilder::new("INSERT INTO measurements (sensor_id, value, value_text, measured_at) ");
+        let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+            "INSERT INTO measurements (sensor_id, value, value_text, measured_at) ",
+        );
 
         query_builder.push_values(chunk, |mut b, m| {
             let (num, text): (Option<f64>, Option<&str>) = match &m.value {
@@ -338,9 +342,8 @@ pub async fn upload_camera_image(
                     .bytes()
                     .await
                     .map_err(|e| bad_request(format!("failed to read `prompts` part: {e}")))?;
-                let parsed: Vec<AnalysisPrompt> = serde_json::from_slice(&bytes).map_err(|e| {
-                    bad_request(format!("`prompts` part is not valid JSON: {e}"))
-                })?;
+                let parsed: Vec<AnalysisPrompt> = serde_json::from_slice(&bytes)
+                    .map_err(|e| bad_request(format!("`prompts` part is not valid JSON: {e}")))?;
                 prompts = Some(parsed);
             }
             _ => {

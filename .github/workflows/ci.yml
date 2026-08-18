@@ -2,7 +2,7 @@ name: CI
 
 # Lint + hygiene checks that must pass before a branch can merge into main.
 # Required status checks for branch protection are keyed off these job names:
-#   clippy, cargo-sort, cargo-machete.
+#   clippy, rustfmt, cargo-sort, cargo-machete.
 
 on:
   pull_request:
@@ -38,6 +38,22 @@ jobs:
         env:
           SQLX_OFFLINE: "true"
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+  rustfmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # rustfmt.toml uses `imports_granularity`, an unstable option that
+      # stable rustfmt silently ignores — so this must run on nightly.
+      - name: Install nightly Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo +nightly fmt --all --check
 
   cargo-sort:
     name: cargo-sort

@@ -75,7 +75,6 @@ pub struct InsertMeasurementsResponse {
     pub inserted: u64,
 }
 
-
 /// `POST /cameras/images` request query parms.
 #[derive(Deserialize)]
 pub struct UploadCameraImageQuery {

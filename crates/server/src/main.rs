@@ -34,9 +34,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
 
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()),
-        )
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .init();
 
     let config = Configuration::from_env().context("Failed to load configuration")?;
@@ -89,8 +87,7 @@ async fn main() -> anyhow::Result<()> {
         // Raise it for this route only; other routes keep the safe default.
         .route(
             "/cameras/images",
-            post(handlers::upload_camera_image)
-                .layer(DefaultBodyLimit::max(MAX_IMAGE_BODY_BYTES)),
+            post(handlers::upload_camera_image).layer(DefaultBodyLimit::max(MAX_IMAGE_BODY_BYTES)),
         )
         .route("/webhooks/topco", post(handlers::topco_webhook))
         .layer(from_fn_with_state(
@@ -163,6 +160,7 @@ async fn ensure_s3_bucket(name: &str) -> anyhow::Result<s3::Bucket> {
         Err(e) => return Err(e).context("Failed to create S3 bucket"),
     }
 
-    let bucket = s3::Bucket::new(name, region, credentials).context("Failed to construct S3 bucket")?;
+    let bucket =
+        s3::Bucket::new(name, region, credentials).context("Failed to construct S3 bucket")?;
     Ok(*bucket)
 }
