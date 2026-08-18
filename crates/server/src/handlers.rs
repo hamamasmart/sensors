@@ -27,6 +27,9 @@ pub struct AppState {
     pub openrouter_api_key: String,
     /// OpenRouter API base URL.
     pub openrouter_base_url: String,
+    /// In-memory batch analysis jobs (offline `POST /cameras/analyze`). Cheap
+    /// to clone — the whole store lives behind one `Arc`.
+    pub jobs: batch_analysis::JobStore,
 }
 
 pub(crate) type ApiError = (StatusCode, String);
@@ -225,9 +228,11 @@ async fn insert_measurements_db(
     Ok(inserted)
 }
 
+mod batch_analysis;
 mod image_analysis;
 mod topco;
 
+pub use batch_analysis::{get_batch_analysis_progress, start_batch_analysis};
 pub use topco::topco_webhook;
 
 // ── HTTP handlers ───────────────────────────────────────────────────────────

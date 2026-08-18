@@ -117,6 +117,15 @@ struct ChoiceMessage {
 /// — which would then each be retried, compounding the load.
 const INFERENCE_CONCURRENCY: usize = 4;
 
+/// Aggregate result of running a prompt set against one image: how many prompts
+/// succeeded (value stored) and how many failed (inference or DB error). Used
+/// by the batch analysis worker to report per-image progress; the on-the-fly
+/// upload path ignores the return value.
+pub(crate) struct AnalysisSummary {
+    pub succeeded: usize,
+    pub failed: usize,
+}
+
 /// Run every prompt against the image at `image_url`, returning one result per
 /// prompt in the input order. Each prompt is inferred independently, with at
 /// most [`INFERENCE_CONCURRENCY`] in flight at once; failures (after retries)
@@ -125,6 +134,10 @@ const INFERENCE_CONCURRENCY: usize = 4;
 /// `key` is the OpenRouter API key. The caller gates on it being `Some` and
 /// never invokes this function without one, so — unlike the previous shape —
 /// there is no `None` arm here: the invariant is encoded in the `&str` type.
+///
+/// Returns an [`AnalysisSummary`] counting prompt-level successes and failures
+/// so the batch worker can aggregate per-image progress. Per-prompt outcomes
+/// are still logged exactly as before.
 pub(crate) async fn run_analyses(
     state: &crate::handlers::AppState,
     key: &str,
@@ -132,11 +145,11 @@ pub(crate) async fn run_analyses(
     captured_at: chrono::DateTime<chrono::Utc>,
     image_url: String,
     prompts: Vec<AnalysisPrompt>,
-) {
+) -> AnalysisSummary {
     // `buffer_unordered` caps in-flight inferences at INFERENCE_CONCURRENCY
     // while still completing as fast as the model allows. The index is carried
     // through so results can be sorted back into input order before storage.
-    stream::iter(prompts)
+    let results: Vec<(AnalysisPrompt, Result<(), anyhow::Error>)> = stream::iter(prompts)
         .map(|prompt| {
             let image_url = image_url.clone();
             let key = key.to_string();
@@ -166,21 +179,33 @@ pub(crate) async fn run_analyses(
             .map(|res: Result<(), anyhow::Error>| (prompt_cloned, res))
         })
         .buffer_unordered(INFERENCE_CONCURRENCY)
-        .for_each(async |(prompt, res)| match &res {
-            Err(e) => tracing::warn!(
-                prompt_id = %prompt.prompt_id,
-                camera_id,
-                prompt_id = %prompt.prompt_id,
-                captured_at = %captured_at,
-                error = ?e,
-                "image analysis failed",
-            ),
-            Ok(()) => tracing::info!(
-                prompt_id = %prompt.prompt_id,
-                "image analysis stored",
-            ),
-        })
+        .collect()
         .await;
+
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
+    for (prompt, res) in &results {
+        match res {
+            Ok(()) => {
+                tracing::info!(
+                    prompt_id = %prompt.prompt_id,
+                    "image analysis stored",
+                );
+                succeeded += 1;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    prompt_id = %prompt.prompt_id,
+                    camera_id,
+                    captured_at = %captured_at,
+                    error = ?e,
+                    "image analysis failed",
+                );
+                failed += 1;
+            }
+        }
+    }
+    AnalysisSummary { succeeded, failed }
 }
 
 /// The `external_id` of the per-`(camera, prompt)` sensor that an analysis
