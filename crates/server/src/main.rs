@@ -70,7 +70,6 @@ async fn main() -> anyhow::Result<()> {
         http,
         openrouter_api_key: config.openrouter_api_key,
         openrouter_base_url: config.openrouter_base_url,
-        jobs: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     // Auth-guarded API routes. Every write goes through the bearer-token

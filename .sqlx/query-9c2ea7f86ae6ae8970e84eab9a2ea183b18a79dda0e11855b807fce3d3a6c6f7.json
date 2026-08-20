@@ -1,0 +1,136 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT status as \"status!: AnalysisJobStatus\", total_images, processed_images,\n                  failed_images, succeeded, failed, started_at, finished_at, error\n           FROM batch_analysis_jobs WHERE job_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status!: AnalysisJobStatus",
+        "type_info": {
+          "Custom": {
+            "name": "batch_job_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "running",
+                "completed",
+                "failed"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "batch_analysis_jobs",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "total_images",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "batch_analysis_jobs",
+            "name": "total_images"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "processed_images",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "batch_analysis_jobs",
+            "name": "processed_images"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "failed_images",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "batch_analysis_jobs",
+            "name": "failed_images"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "succeeded",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "batch_analysis_jobs",
+            "name": "succeeded"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "failed",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "batch_analysis_jobs",
+            "name": "failed"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "started_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "batch_analysis_jobs",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "finished_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "batch_analysis_jobs",
+            "name": "finished_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "batch_analysis_jobs",
+            "name": "error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "9c2ea7f86ae6ae8970e84eab9a2ea183b18a79dda0e11855b807fce3d3a6c6f7"
+}

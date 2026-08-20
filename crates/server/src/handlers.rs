@@ -27,9 +27,6 @@ pub struct AppState {
     pub openrouter_api_key: String,
     /// OpenRouter API base URL.
     pub openrouter_base_url: String,
-    /// In-memory batch analysis jobs (offline `POST /cameras/analyze`). Cheap
-    /// to clone — the whole store lives behind one `Arc`.
-    pub jobs: batch_analysis::JobStore,
 }
 
 pub(crate) type ApiError = (StatusCode, String);

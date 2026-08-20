@@ -9,15 +9,16 @@
 //! `{camera_id}_{prompt_id}` sensors. The request returns immediately with a
 //! `job_id`; poll [`get_batch_analysis_progress`] for status.
 //!
-//! Memory is bounded (the server runs in a 512 MB container): the S3 listing
-//! uses `Bucket::list_page` one page at a time (never `Bucket::list`, which
-//! collects the whole history into a `Vec`), items are pulled on demand by
-//! `buffer_unordered`, and the full matched image set is never materialized.
+//! Job state is persisted in the `batch_analysis_jobs` table (not in memory)
+//! so progress survives server restarts. The worker runs two streaming passes
+//! over the S3 listing, both memory-bounded (the server runs in a 512 MB
+//! container): a **count pass** that establishes `total_images` up front so
+//! progress is meaningful from the start, then a **process pass** that
+//! presigns and infers each image. Neither pass materializes the full listing
+//! — each uses `Bucket::list_page` one page at a time (never `Bucket::list`,
+//! which collects the whole history into a `Vec`).
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use axum::{
     Json,
@@ -26,6 +27,7 @@ use axum::{
 };
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::stream::{self, StreamExt};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use api_types::{
@@ -34,52 +36,35 @@ use api_types::{
 };
 
 use super::{
-    ApiError, AppState, bad_request,
+    ApiError, AppState, bad_request, err,
     image_analysis::{AnalysisSummary, presign_image_url, run_analyses},
 };
 
 /// Max images analyzed concurrently. Each image's prompts are already bounded
 /// to `INFERENCE_CONCURRENCY` (4) inside `run_analyses`, so this caps total
-/// in-flight OpenRouter calls at `BATCH_IMAGE_CONCURRENCY * 4`. Kept low for the
-/// 512 MB container and OpenRouter rate limits.
+/// in-flight OpenRouter calls at `BATCH_IMAGE_CONCURRENCY * 4`. Kept low for
+/// the 512 MB container and OpenRouter rate limits.
 const BATCH_IMAGE_CONCURRENCY: usize = 2;
-
-/// Soft cap on remembered jobs so a long-running 512 MB container cannot leak
-/// finished job entries without bound. When the store is at capacity on
-/// insert, finished (`Completed`/`Failed`) entries are evicted first; in-flight
-/// jobs are never dropped.
-const MAX_JOB_ENTRIES: usize = 128;
 
 /// The S3 key-path timestamp format (see `upload_camera_image`):
 /// `<camera_id>/YYYY/MM/DD/HH/MM_SS.png`.
 const KEY_TIME_FORMAT: &str = "%Y/%m/%d/%H/%M_%S";
 
-/// Shared in-memory store of batch analysis jobs. `std::sync::Mutex` is safe
-/// here because no guard is ever held across an `.await` — every lock is a
-/// short, synchronous counter mutation or snapshot.
-pub(crate) type JobStore = Arc<Mutex<HashMap<Uuid, AnalysisJobState>>>;
-
-/// One in-flight (or finished) batch job. Mirrors [`AnalysisJobProgressResponse`]
-/// minus the `job_id` (the map key is the id).
-pub(crate) struct AnalysisJobState {
-    pub status: AnalysisJobStatus,
-    /// Images discovered so far. Grows as the S3 listing streams in and
-    /// converges once every camera's listing is exhausted (the worker does not
-    /// pre-count — that would require materializing the full listing).
-    pub total_images: u64,
-    /// Images whose analysis has finished (success or per-prompt failure).
-    pub processed_images: u64,
-    /// Images where at least one prompt failed.
-    pub failed_images: u64,
-    /// Prompt-level successes across all processed images.
-    pub succeeded: u64,
-    /// Prompt-level failures across all processed images.
-    pub failed: u64,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
-    /// Populated only when `status == Failed` (job-level error, e.g. S3 list
-    /// failure).
-    pub error: Option<String>,
+/// One row of `batch_analysis_jobs`, decoded by the `query_as!` macro below
+/// (each field matched to a selected column by name — `FromRow` is not needed).
+/// `status` decodes straight into [`AnalysisJobStatus`] (a native Postgres enum
+/// via `sqlx::Type`); `BIGINT` columns decode as `i64`, carried as `u64` in the
+/// progress response (counts are non-negative, so the cast is safe).
+struct JobRow {
+    status: AnalysisJobStatus,
+    total_images: i64,
+    processed_images: i64,
+    failed_images: i64,
+    succeeded: i64,
+    failed: i64,
+    started_at: DateTime<Utc>,
+    finished_at: Option<DateTime<Utc>>,
+    error: Option<String>,
 }
 
 /// The timestamp-parsed, in-window image to process, produced by streaming the
@@ -99,6 +84,139 @@ struct ListState {
     /// camera" or "this camera is exhausted".
     token: Option<String>,
 }
+
+// ── DB helpers ───────────────────────────────────────────────────────────────
+//
+// Compile-time-checked `query!` / `query_as!` macros (validated against the
+// `.sqlx` offline cache), matching `upsert_sensor_db`'s `query_scalar!` /
+// `previous_results_text`'s `query_as!`. The one runtime `QueryBuilder` in the
+// crate (`insert_measurements_db`) is reserved for the dynamic-row-count batch
+// insert; these job queries all have a fixed shape, so they get macros.
+//
+// `status` is a native Postgres enum (`batch_job_status`) and `AnalysisJobStatus`
+// derives `sqlx::Type` (via the `api-types` `sqlx` feature), so it binds and
+// decodes directly — no `::text` cast on select and no string→enum bridge. This
+// differs from `value_type` handling (which still text-bridges) only because
+// `value_type` predates the feature flag; `AnalysisJobStatus` was added with it.
+
+/// Insert a fresh `pending` job row. Counter columns default to 0 / NULL.
+///
+/// The `as AnalysisJobStatus` cast is the sqlx `query!` idiom for binding a
+/// custom enum: the macro has no built-in Postgres→Rust mapping for the
+/// `batch_job_status` enum, so a no-op cast on the bind expression makes the
+/// macro skip its type-check (the cast compiles trivially since it casts a
+/// value to its own type) and lets the `sqlx::Type`-derived `Encode` handle the
+/// actual encoding at runtime.
+async fn insert_job(
+    pool: &PgPool,
+    job_id: Uuid,
+    started_at: DateTime<Utc>,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        r#"INSERT INTO batch_analysis_jobs (job_id, status, started_at)
+           VALUES ($1, $2, $3)"#,
+        job_id,
+        AnalysisJobStatus::Pending as AnalysisJobStatus,
+        started_at,
+    )
+    .execute(pool)
+    .await
+    .map_err(err)?;
+    Ok(())
+}
+
+/// Flip the job to `running`.
+async fn set_job_running(pool: &PgPool, job_id: Uuid) -> Result<(), ApiError> {
+    sqlx::query!(
+        r#"UPDATE batch_analysis_jobs SET status = $2 WHERE job_id = $1"#,
+        job_id,
+        AnalysisJobStatus::Running as AnalysisJobStatus,
+    )
+    .execute(pool)
+    .await
+    .map_err(err)?;
+    Ok(())
+}
+
+/// Record the up-front total image count (after the count pass).
+async fn set_total_images(pool: &PgPool, job_id: Uuid, total: u64) -> Result<(), ApiError> {
+    sqlx::query!(
+        r#"UPDATE batch_analysis_jobs SET total_images = $2 WHERE job_id = $1"#,
+        job_id,
+        total as i64,
+    )
+    .execute(pool)
+    .await
+    .map_err(err)?;
+    Ok(())
+}
+
+/// Increment the per-image progress counters after one image is processed.
+/// `failed_images` bumps by 1 only when at least one prompt for that image
+/// failed. All counter columns are `BIGINT`, so the increments bind as `i64`.
+async fn record_image(
+    pool: &PgPool,
+    job_id: Uuid,
+    outcome: &AnalysisSummary,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        r#"UPDATE batch_analysis_jobs
+           SET processed_images = processed_images + 1,
+               succeeded = succeeded + $2,
+               failed = failed + $3,
+               failed_images = failed_images + $4
+           WHERE job_id = $1"#,
+        job_id,
+        outcome.succeeded as i64,
+        outcome.failed as i64,
+        (outcome.failed > 0) as i64,
+    )
+    .execute(pool)
+    .await
+    .map_err(err)?;
+    Ok(())
+}
+
+/// Mark the job finished: terminal status + `finished_at` + optional error.
+/// `error` is a nullable `TEXT` column, so `Option<&str>` binds directly.
+async fn finish_job(
+    pool: &PgPool,
+    job_id: Uuid,
+    status: AnalysisJobStatus,
+    error: Option<&str>,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        r#"UPDATE batch_analysis_jobs
+           SET status = $2, finished_at = NOW(), error = $3
+           WHERE job_id = $1"#,
+        job_id,
+        status as AnalysisJobStatus,
+        error,
+    )
+    .execute(pool)
+    .await
+    .map_err(err)?;
+    Ok(())
+}
+
+/// Fetch a job row for the progress endpoint. `None` if the id is unknown.
+/// `query_as!` decodes each selected column into the matching `JobRow` field by
+/// name (no `FromRow` derive needed); `status` decodes straight into
+/// [`AnalysisJobStatus`] as the native enum.
+async fn fetch_job(pool: &PgPool, job_id: Uuid) -> Result<Option<JobRow>, ApiError> {
+    sqlx::query_as!(
+        JobRow,
+        r#"SELECT status as "status!: AnalysisJobStatus", total_images, processed_images,
+                  failed_images, succeeded, failed, started_at, finished_at, error
+           FROM batch_analysis_jobs WHERE job_id = $1"#,
+        job_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(err)
+}
+
+// ── S3 listing ───────────────────────────────────────────────────────────────
 
 /// Parse an S3 object key into an in-window [`ListItem`].
 ///
@@ -129,147 +247,36 @@ fn parse_key(
     })
 }
 
-/// `POST /cameras/analyze` — start an offline batch analysis job.
+/// Build a lazy stream of in-window images plus a shared cell for a listing
+/// error. The stream pulls one S3 `list_page` (~1000 objects) per poll,
+/// filters keys to the window, and flattens; the error cell is written if any
+/// `list_page` fails (the stream then ends). Keys are never collected into a
+/// single `Vec` across the whole history, so peak memory is ~one page.
 ///
-/// Validates the request, registers a `Pending` job in the in-memory store, and
-/// spawns the worker. Returns `202 Accepted` with the `job_id` immediately —
-/// analysis runs entirely in the background; poll
-/// `GET /cameras/analyze/{job_id}` for progress.
-pub async fn start_batch_analysis(
-    State(state): State<AppState>,
-    Json(req): Json<AnalyzeCamerasRequest>,
-) -> Result<(StatusCode, Json<AnalyzeCamerasResponse>), ApiError> {
-    if req.camera_ids.is_empty() {
-        return Err(bad_request("`camera_ids` must not be empty"));
-    }
-    if req.prompts.is_empty() {
-        return Err(bad_request("`prompts` must not be empty"));
-    }
-    if req.from >= req.to {
-        return Err(bad_request("`from` must be earlier than `to`"));
-    }
-
-    // Dedup camera ids so a repeated id does not list (and analyze) the same
-    // S3 prefix twice.
-    let mut camera_ids = req.camera_ids.clone();
-    camera_ids.sort_unstable();
-    camera_ids.dedup();
-
-    let job_id = Uuid::new_v4();
-    let started_at = Utc::now();
-    {
-        let mut jobs = state.jobs.lock().unwrap();
-        // Evict finished jobs when at capacity so the store cannot grow
-        // without bound on a long-running container. Only Completed/Failed
-        // entries are dropped — never in-flight work.
-        if jobs.len() >= MAX_JOB_ENTRIES {
-            jobs.retain(|_, j| {
-                matches!(
-                    j.status,
-                    AnalysisJobStatus::Pending | AnalysisJobStatus::Running
-                )
-            });
-        }
-        jobs.insert(
-            job_id,
-            AnalysisJobState {
-                status: AnalysisJobStatus::Pending,
-                total_images: 0,
-                processed_images: 0,
-                failed_images: 0,
-                succeeded: 0,
-                failed: 0,
-                started_at,
-                finished_at: None,
-                error: None,
-            },
-        );
-    }
-
-    let state = state.clone();
-    tokio::spawn(async move {
-        run_batch_analysis(state, job_id, camera_ids, req.from, req.to, req.prompts).await;
-    });
-
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(AnalyzeCamerasResponse { job_id }),
-    ))
-}
-
-/// `GET /cameras/analyze/{job_id}` — report progress of a batch analysis job.
-///
-/// Returns `404` if the job id is unknown (never started, or evicted from the
-/// in-memory store).
-pub async fn get_batch_analysis_progress(
-    State(state): State<AppState>,
-    Path(job_id): Path<Uuid>,
-) -> Result<Json<AnalysisJobProgressResponse>, ApiError> {
-    let jobs = state.jobs.lock().unwrap();
-    let job = jobs.get(&job_id).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("analysis job {job_id} not found"),
-        )
-    })?;
-    Ok(Json(AnalysisJobProgressResponse {
-        job_id,
-        status: job.status,
-        total_images: job.total_images,
-        processed_images: job.processed_images,
-        failed_images: job.failed_images,
-        succeeded: job.succeeded,
-        failed: job.failed,
-        started_at: job.started_at,
-        finished_at: job.finished_at,
-        error: job.error.clone(),
-    }))
-}
-
-/// The batch worker: stream S3 listings → filter to the window → presign each
-/// image URL → run `run_analyses` → record progress, all bounded by
-/// [`BATCH_IMAGE_CONCURRENCY`]. Never materializes the full image set.
-async fn run_batch_analysis(
-    state: AppState,
-    job_id: Uuid,
-    camera_ids: Vec<String>,
+/// Returned as a tuple so the count pass can `.count()` the stream and the
+/// process pass can `.map()` it — each pass calls this once (the cost of not
+/// materializing the listing is a second listing pass).
+fn stream_list_items(
+    bucket: s3::Bucket,
+    cameras: Vec<String>,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
-    prompts: Vec<AnalysisPrompt>,
+) -> (
+    impl futures::Stream<Item = ListItem>,
+    Arc<Mutex<Option<String>>>,
 ) {
-    // Flip Pending → Running. If the entry was evicted before the worker
-    // started (shouldn't happen — only finished jobs are evicted), abort.
-    {
-        let mut jobs = state.jobs.lock().unwrap();
-        let Some(job) = jobs.get_mut(&job_id) else {
-            return;
-        };
-        job.status = AnalysisJobStatus::Running;
-    }
-
-    // Cell for a job-level (S3 listing) error, written from inside the listing
-    // stream and read after it drains to decide the final status. The stream
-    // itself can only yield items or end; surfacing the error via a shared cell
-    // avoids losing the message.
     let list_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    // Clone for the listing stream; the original is read after the stream
-    // drains to decide the final status.
-    let list_error_stream = list_error.clone();
-    let bucket = state.s3.clone();
+    let list_error_inner = list_error.clone();
 
-    // Lazy stream of in-window images: one `list_page` per poll, filtered,
-    // chunked per page, then flattened. `Bucket::list_page` returns a single
-    // page (~1000 objects) — never the collected-all-pages `Vec` that
-    // `Bucket::list` would.
     let items = stream::unfold(
         ListState {
-            cameras: camera_ids,
+            cameras,
             cam_idx: 0,
             token: None,
         },
         move |mut st| {
             let bucket = bucket.clone();
-            let list_error = list_error_stream.clone();
+            let list_error = list_error_inner.clone();
             async move {
                 if st.cam_idx >= st.cameras.len() {
                     return None; // every camera listed
@@ -308,22 +315,132 @@ async fn run_batch_analysis(
     )
     .flat_map(stream::iter);
 
-    // Discover (count total) + presign + infer + record progress, bounded to
-    // BATCH_IMAGE_CONCURRENCY images in flight. The closure captures clones
-    // (AppState is cheaply Clone — all its fields are Arc/clone handles), and
-    // each lock is released before any `.await` so no guard spans a suspension.
-    let processing_state = state.clone();
+    (items, list_error)
+}
+
+// ── HTTP handlers ────────────────────────────────────────────────────────────
+
+/// `POST /cameras/analyze` — start an offline batch analysis job.
+///
+/// Validates the request, inserts a `pending` job row, and spawns the worker.
+/// Returns `202 Accepted` with the `job_id` immediately — analysis runs
+/// entirely in the background; poll `GET /cameras/analyze/{job_id}` for
+/// progress.
+pub async fn start_batch_analysis(
+    State(state): State<AppState>,
+    Json(req): Json<AnalyzeCamerasRequest>,
+) -> Result<(StatusCode, Json<AnalyzeCamerasResponse>), ApiError> {
+    if req.camera_ids.is_empty() {
+        return Err(bad_request("`camera_ids` must not be empty"));
+    }
+    if req.prompts.is_empty() {
+        return Err(bad_request("`prompts` must not be empty"));
+    }
+    if req.from >= req.to {
+        return Err(bad_request("`from` must be earlier than `to`"));
+    }
+
+    // Dedup camera ids so a repeated id does not list (and analyze) the same
+    // S3 prefix twice.
+    let mut camera_ids = req.camera_ids.clone();
+    camera_ids.sort_unstable();
+    camera_ids.dedup();
+
+    let job_id = Uuid::new_v4();
+    let started_at = Utc::now();
+    insert_job(&state.pool, job_id, started_at).await?;
+
+    let state = state.clone();
+    tokio::spawn(async move {
+        run_batch_analysis(state, job_id, camera_ids, req.from, req.to, req.prompts).await;
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AnalyzeCamerasResponse { job_id }),
+    ))
+}
+
+/// `GET /cameras/analyze/{job_id}` — report progress of a batch analysis job.
+///
+/// Returns `404` if the job id is unknown.
+pub async fn get_batch_analysis_progress(
+    State(state): State<AppState>,
+    Path(job_id): Path<Uuid>,
+) -> Result<Json<AnalysisJobProgressResponse>, ApiError> {
+    let row = fetch_job(&state.pool, job_id).await?.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("analysis job {job_id} not found"),
+        )
+    })?;
+    Ok(Json(AnalysisJobProgressResponse {
+        job_id,
+        status: row.status,
+        total_images: row.total_images as u64,
+        processed_images: row.processed_images as u64,
+        failed_images: row.failed_images as u64,
+        succeeded: row.succeeded as u64,
+        failed: row.failed as u64,
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+        error: row.error,
+    }))
+}
+
+// ── Worker ───────────────────────────────────────────────────────────────────
+
+/// The batch worker: count the in-window images (up-front `total_images`),
+/// then stream them again to presign + infer each, recording progress per
+/// image. Both passes stream S3 pages one at a time and never materialize the
+/// full image set.
+async fn run_batch_analysis(
+    state: AppState,
+    job_id: Uuid,
+    camera_ids: Vec<String>,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    prompts: Vec<AnalysisPrompt>,
+) {
+    let pool = state.pool.clone();
+
+    // Flip pending → running. If this fails the job stays `pending`; nothing
+    // more to do from the worker (the row remains visible to polling).
+    if let Err(e) = set_job_running(&pool, job_id).await {
+        tracing::warn!(%job_id, error = ?e, "failed to mark batch job running");
+        return;
+    }
+
+    // Phase 1 — count: stream the listing once, only to count in-window
+    // images. `.count()` consumes the stream without storing the keys, so peak
+    // memory is one S3 page. The up-front total makes progress meaningful from
+    // the first processed image.
+    let (count_stream, count_error) =
+        stream_list_items(state.s3.clone(), camera_ids.clone(), from, to);
+    let total: u64 = count_stream.count().await as u64;
+    // Take the error out of the cell into a local so the `MutexGuard` (a
+    // temporary in the `if let` condition) is dropped before the `.await` below
+    // — `std::sync::MutexGuard` is `!Send`, so it cannot live across an await.
+    let count_err = count_error.lock().unwrap().take();
+    if let Some(err) = count_err {
+        let _ = finish_job(&pool, job_id, AnalysisJobStatus::Failed, Some(&err)).await;
+        return;
+    }
+    // Best-effort: a failure to write the total is non-fatal (processing can
+    // still proceed; progress just reads the old total).
+    if let Err(e) = set_total_images(&pool, job_id, total).await {
+        tracing::warn!(%job_id, error = ?e, "failed to set total_images");
+    }
+
+    // Phase 2 — process: stream the listing again, presign + infer each image,
+    // bounded to BATCH_IMAGE_CONCURRENCY in flight. Each completed image bumps
+    // the DB progress counters.
+    let (item_stream, proc_error) = stream_list_items(state.s3.clone(), camera_ids, from, to);
     let api_key = state.openrouter_api_key.clone();
-    items
+    let proc_state = state.clone();
+    item_stream
         .map(move |item: ListItem| {
-            // Discovery: this image is part of the total.
-            {
-                let mut jobs = processing_state.jobs.lock().unwrap();
-                if let Some(job) = jobs.get_mut(&job_id) {
-                    job.total_images += 1;
-                }
-            }
-            let state = processing_state.clone();
+            let state = proc_state.clone();
             let api_key = api_key.clone();
             let prompts = prompts.clone();
             async move {
@@ -344,25 +461,15 @@ async fn run_batch_analysis(
                         // call), so a failure here is exceptional. Treat it as
                         // all prompts for this image failing.
                         let failed = prompts.len();
-                        tracing::warn!(
-                            key = %item.key,
-                            "presign failed for batch image: {}",
-                            e.1
-                        );
+                        tracing::warn!(key = %item.key, "presign failed: {}", e.1);
                         AnalysisSummary {
                             succeeded: 0,
                             failed,
                         }
                     }
                 };
-                let mut jobs = state.jobs.lock().unwrap();
-                if let Some(job) = jobs.get_mut(&job_id) {
-                    job.processed_images += 1;
-                    job.succeeded += outcome.succeeded as u64;
-                    job.failed += outcome.failed as u64;
-                    if outcome.failed > 0 {
-                        job.failed_images += 1;
-                    }
+                if let Err(e) = record_image(&state.pool, job_id, &outcome).await {
+                    tracing::warn!(%job_id, error = ?e, "failed to record image progress");
                 }
             }
         })
@@ -370,18 +477,16 @@ async fn run_batch_analysis(
         .for_each(|()| async {})
         .await;
 
-    // Finalize: a listing error aborts the job (Failed); otherwise it ran to
-    // completion (Completed), including the zero-images-in-window case.
-    let list_error = list_error.lock().unwrap().take();
-    let mut jobs = state.jobs.lock().unwrap();
-    if let Some(job) = jobs.get_mut(&job_id) {
-        job.finished_at = Some(Utc::now());
-        job.status = if list_error.is_some() {
-            AnalysisJobStatus::Failed
-        } else {
-            AnalysisJobStatus::Completed
-        };
-        job.error = list_error;
+    // A mid-process listing failure aborts; otherwise the run is complete
+    // (including the zero-images-in-window case, which is a clean `completed`).
+    // Same `!Send`-guard note as the count pass: take into a local first.
+    let proc_err = proc_error.lock().unwrap().take();
+    let (status, error) = match proc_err {
+        Some(e) => (AnalysisJobStatus::Failed, Some(e)),
+        None => (AnalysisJobStatus::Completed, None),
+    };
+    if let Err(e) = finish_job(&pool, job_id, status, error.as_deref()).await {
+        tracing::warn!(%job_id, error = ?e, "failed to finalize batch job");
     }
 }
 

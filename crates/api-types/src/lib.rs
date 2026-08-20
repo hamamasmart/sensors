@@ -119,8 +119,19 @@ pub struct AnalyzeCamerasResponse {
 /// Lifecycle of a batch analysis job. `Failed` means a job-level error (e.g. an
 /// S3 listing failure) aborted the run; per-image / per-prompt failures are
 /// reported in the progress counts, not the status.
+///
+/// When the `sqlx` feature is enabled (by the `server` crate), this derives
+/// `sqlx::Type` and maps 1:1 onto the native Postgres enum `batch_job_status`
+/// — variants are renamed to the same snake_case labels the migration declares,
+/// so the enum binds and decodes directly with no string bridge. The serde
+/// representation is the same snake_case, keeping the DB and JSON in sync.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "sqlx",
+    derive(sqlx::Type),
+    sqlx(type_name = "batch_job_status", rename_all = "snake_case")
+)]
 pub enum AnalysisJobStatus {
     Pending,
     Running,

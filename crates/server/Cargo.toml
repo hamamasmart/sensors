@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-api-types = { workspace = true }
+api-types = { workspace = true, features = ["sqlx"] }
 axum = { version = "0.8", features = ["multipart"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
