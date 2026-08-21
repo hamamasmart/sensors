@@ -10,4 +10,6 @@ resolver = "3"
 
 [workspace.dependencies]
 # Shared internal contract
-api-types = { path = "crates/api-types" }
+api-types = { path = "crates/api-types", default-features = false }
+# ESP32-S3 firmware library (Modbus master driver, sensor definitions)
+firmware = { path = "crates/firmware" }

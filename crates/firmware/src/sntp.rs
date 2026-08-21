@@ -1,13 +1,23 @@
 use chrono::{DateTime, Utc};
-use embassy_net::udp::{PacketMetadata, UdpSocket};
-use embassy_net::{IpAddress, Stack};
+use embassy_net::{
+    IpAddress, Stack,
+    dns::DnsSocket,
+    udp::{PacketMetadata, UdpSocket},
+};
 use embassy_time::{Duration, Instant, with_timeout};
+use sntpc::{NtpContext, get_time};
+use sntpc_net_embassy::UdpSocketWrapper;
+use sntpc_time_embassy::EmbassyTimestampGenerator;
 
 const NTP_PORT: u16 = 123;
-// Difference in seconds between NTP epoch (1900-01-01) and Unix epoch (1970-01-01)
-const NTP_TO_UNIX_OFFSET_SECS: u64 = 2_208_988_800;
+/// Re-synchronize against the NTP server this often so accumulated drift stays bounded.
+const RESYNC_INTERVAL: Duration = Duration::from_secs(3600);
 
 /// Clock synchronized via SNTP with monotonic elapsed tracking.
+///
+/// Uses the [`sntpc`] crate for the actual NTP exchange. Between synchronizations the current
+/// UTC time is extrapolated from the last known NTP second plus embassy's monotonic elapsed
+/// time; this is only valid while synchronized, so callers must gate on [`SyncedClock::is_synchronized`].
 pub struct SyncedClock {
     base_unix_secs: u64,
     sync_instant: Instant,
@@ -21,14 +31,24 @@ impl SyncedClock {
         }
     }
 
-    /// Return the current UTC time.
+    /// Whether a successful NTP exchange has established a real wall-clock base.
+    pub fn is_synchronized(&self) -> bool {
+        self.base_unix_secs != 0
+    }
+
+    /// Whether enough time has passed since the last sync that we should re-sync.
+    pub fn needs_resync(&self) -> bool {
+        self.is_synchronized() && self.sync_instant.elapsed() >= RESYNC_INTERVAL
+    }
+
+    /// Return the current UTC time. Meaningless until synchronized.
     pub fn now(&self) -> DateTime<Utc> {
         let elapsed_secs = self.sync_instant.elapsed().as_secs();
-        let current_secs = self.base_unix_secs + elapsed_secs;
+        let current_secs = self.base_unix_secs.saturating_add(elapsed_secs);
         DateTime::<Utc>::from_timestamp(current_secs as i64, 0).unwrap_or_default()
     }
 
-    /// Synchronize time against an NTP server.
+    /// Synchronize time against an NTP server using the [`sntpc`] client.
     pub async fn sync(&mut self, stack: Stack<'_>, ntp_host: &str) -> Result<(), SntpError> {
         let server_ip = resolve_ntp_host(stack, ntp_host).await?;
 
@@ -44,48 +64,26 @@ impl SyncedClock {
             &mut tx_meta,
             &mut tx_buffer,
         );
-
         socket.bind(0).map_err(|_| SntpError::BindFailed)?;
+        let socket = UdpSocketWrapper::new(socket);
 
-        // Standard SNTP v4 Request: LI = 0, VN = 4, Mode = 3 (Client)
-        let mut request = [0u8; 48];
-        request[0] = 0b00_100_011;
+        let context = NtpContext::new(EmbassyTimestampGenerator::default());
+        let server_addr = core::net::SocketAddr::new(server_ip, NTP_PORT);
 
-        with_timeout(
+        let result = with_timeout(
             Duration::from_secs(5),
-            socket.send_to(&request, (server_ip, NTP_PORT)),
+            get_time(server_addr, &socket, context),
         )
         .await
         .map_err(|_| SntpError::Timeout)?
-        .map_err(|_| SntpError::SendFailed)?;
+        .map_err(|_| SntpError::NoResponse)?;
 
-        let mut response = [0u8; 48];
-        let (len, _) = with_timeout(Duration::from_secs(5), socket.recv_from(&mut response))
-            .await
-            .map_err(|_| SntpError::Timeout)?
-            .map_err(|_| SntpError::RecvFailed)?;
-
-        if len < 48 {
-            return Err(SntpError::InvalidResponse);
-        }
-
-        // Transmit Timestamp is at bytes 40..44 (seconds since 1900)
-        let ntp_secs = u32::from_be_bytes([
-            response[40],
-            response[41],
-            response[42],
-            response[43],
-        ]) as u64;
-
-        if ntp_secs < NTP_TO_UNIX_OFFSET_SECS {
-            return Err(SntpError::InvalidTimestamp);
-        }
-
-        let unix_secs = ntp_secs - NTP_TO_UNIX_OFFSET_SECS;
-        self.base_unix_secs = unix_secs;
+        self.base_unix_secs = result.sec();
         self.sync_instant = Instant::now();
-
-        log::info!("SNTP time synchronized: unix timestamp = {unix_secs}");
+        log::info!(
+            "SNTP synchronized: unix timestamp = {}",
+            self.base_unix_secs
+        );
         Ok(())
     }
 }
@@ -94,21 +92,30 @@ impl SyncedClock {
 pub enum SntpError {
     DnsLookupFailed,
     BindFailed,
-    SendFailed,
-    RecvFailed,
     Timeout,
-    InvalidResponse,
-    InvalidTimestamp,
+    NoResponse,
 }
 
-async fn resolve_ntp_host(stack: Stack<'_>, host: &str) -> Result<IpAddress, SntpError> {
+async fn resolve_ntp_host(stack: Stack<'_>, host: &str) -> Result<core::net::IpAddr, SntpError> {
     if let Ok(ip) = host.parse::<core::net::Ipv4Addr>() {
-        return Ok(IpAddress::Ipv4(ip));
+        return Ok(core::net::IpAddr::V4(ip));
+    }
+    if let Ok(ip) = host.parse::<core::net::Ipv6Addr>() {
+        return Ok(core::net::IpAddr::V6(ip));
     }
 
-    let dns_client = embassy_net::dns::DnsSocket::new(stack);
-    match dns_client.query(host, embassy_net::dns::DnsQueryType::A).await {
-        Ok(addrs) => addrs.first().cloned().ok_or(SntpError::DnsLookupFailed),
+    let dns_client = DnsSocket::new(stack);
+    match dns_client
+        .query(host, embassy_net::dns::DnsQueryType::A)
+        .await
+    {
+        Ok(addrs) => addrs
+            .iter()
+            .map(|ip| match ip {
+                IpAddress::Ipv4(v) => core::net::IpAddr::V4(*v),
+            })
+            .next()
+            .ok_or(SntpError::DnsLookupFailed),
         Err(_) => Err(SntpError::DnsLookupFailed),
     }
 }

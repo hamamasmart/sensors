@@ -2,13 +2,13 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use chrono::{DateTime, Utc};
-use embedded_hal::digital::OutputPin;
-use embedded_io_async::{Read, Write};
 use uuid::Uuid;
 
+use crate::{
+    config::{RegisterScaling, SensorDefinition},
+    modbus::{ModbusDirectionControl, ModbusError, ModbusMaster},
+};
 use api_types::{Measurement, MeasurementValue};
-use crate::config::{RegisterScaling, SensorDefinition};
-use crate::modbus::{ModbusError, ModbusMaster};
 
 /// Runtime representation of a sensor on the daisy-chained bus.
 pub struct ManagedSensor {
@@ -31,8 +31,8 @@ impl ManagedSensor {
         measured_at: DateTime<Utc>,
     ) -> Result<Measurement, ModbusError>
     where
-        U: Read + Write,
-        DE: OutputPin,
+        U: embedded_io_async::Read + embedded_io_async::Write,
+        DE: ModbusDirectionControl,
     {
         let registers = modbus
             .read_registers(
@@ -61,10 +61,13 @@ impl ManagedSensor {
                 Ok(raw * factor)
             }
             RegisterScaling::SignedScaled(factor) => {
-                let raw_signed = registers[0] as i16 as f64;
-                Ok(raw_signed * factor)
+                let raw = (registers[0] as i16) as f64;
+                Ok(raw * factor)
             }
-            RegisterScaling::Raw => Ok(registers[0] as f64),
+            RegisterScaling::Raw => {
+                let raw = registers[0] as f64;
+                Ok(raw)
+            }
             RegisterScaling::Float32Be => {
                 if registers.len() < 2 {
                     return Err(ModbusError::InvalidResponseLength);
@@ -76,7 +79,7 @@ impl ManagedSensor {
     }
 }
 
-/// Collection of all daisy-chained sensors configured on the RS485 bus.
+/// Manager holding the collection of runtime managed sensors.
 pub struct SensorManager {
     pub sensors: Vec<ManagedSensor>,
 }

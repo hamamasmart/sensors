@@ -1,0 +1,32 @@
+# ESP32-S3 Firmware Configuration
+
+# Provider tag applied to every sensor on this hardware bus.
+provider = "rs485-esp32s3"
+
+# Cadence (in seconds) between sensor reading and telemetry upload cycles.
+poll_interval_secs = 1
+
+[wifi]
+ssid = "Yogev"
+password = "rotemtot"
+
+[server]
+host = "10.100.102.19"
+port = 8080
+auth_token = "testing"
+
+[modbus]
+baud_rate = 9600
+timeout_ms = 1000
+turnaround_delay_ms = 5
+
+# Daisy-chained Modbus-RTU RS485 Sensors
+[[sensors]]
+external_id = "room-lux"
+category = "light_intensity"
+measurement_unit = "lx"
+slave_address = 1
+function = "ReadHoldingRegisters"
+register_address = 8
+register_count = 1
+scaling = { type = "Raw" }

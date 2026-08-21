@@ -1,13 +1,12 @@
 use embassy_net::{Runner, Stack};
 use embassy_time::{Duration, Timer};
-use esp_wifi::wifi::{
-    AuthMethod, ClientConfiguration, Configuration, WifiController, WifiDevice, WifiEvent,
-    WifiState,
+use esp_radio::wifi::{
+    AuthenticationMethodConfig, Config, Interface, WifiController, sta::StationConfig,
 };
 
 /// Run the background network stack task.
 #[embassy_executor::task]
-pub async fn net_task(mut runner: Runner<'static, WifiDevice<'static, esp_wifi::wifi::WifiStaDevice>>) -> ! {
+pub async fn net_task(mut runner: Runner<'static, Interface>) -> ! {
     runner.run().await
 }
 
@@ -18,42 +17,30 @@ pub async fn wifi_task(
     ssid: &'static str,
     password: &'static str,
 ) -> ! {
-    log::info!("Starting Wi-Fi connection task for SSID: {ssid}");
+    log::info!("Starting Wi-Fi connection task");
+
+    // Apply the station configuration (SSID + WPA2 credentials) once. The controller
+    // is created in `main` with a default (empty) config, so without this call the
+    // driver has no SSID and `connect_async` fails with `WifiError::InvalidSsid`.
+    let station_config = Config::Station(
+        StationConfig::default()
+            .with_ssid(ssid.try_into().unwrap_or_default())
+            .with_authentication(AuthenticationMethodConfig::Wpa2Personal(
+                password.try_into().unwrap_or_default(),
+            )),
+    );
+    if let Err(e) = controller.set_config(&station_config) {
+        log::error!("Failed to apply Wi-Fi configuration (ssid: {ssid:?}): {e:?}");
+    }
 
     loop {
-        if esp_wifi::wifi::wifi_state() == WifiState::StaConnected {
-            controller.wait_for_event(WifiEvent::StaDisconnected).await;
-            log::warn!("Wi-Fi disconnected! Reconnecting in 2 seconds...");
-            Timer::after(Duration::from_secs(2)).await;
+        if controller.is_connected() {
+            Timer::after(Duration::from_secs(5)).await;
+            continue;
         }
 
-        if !controller.is_started().unwrap_or(false) {
-            let client_config = Configuration::Client(ClientConfiguration {
-                ssid: ssid.try_into().unwrap_or_default(),
-                password: password.try_into().unwrap_or_default(),
-                auth_method: if password.is_empty() {
-                    AuthMethod::None
-                } else {
-                    AuthMethod::WPA2Personal
-                },
-                ..Default::default()
-            });
-
-            if let Err(e) = controller.set_configuration(&client_config) {
-                log::error!("Failed to set Wi-Fi config: {e:?}");
-                Timer::after(Duration::from_secs(2)).await;
-                continue;
-            }
-
-            if let Err(e) = controller.start().await {
-                log::error!("Failed to start Wi-Fi controller: {e:?}");
-                Timer::after(Duration::from_secs(2)).await;
-                continue;
-            }
-        }
-
-        log::info!("Connecting to Wi-Fi...");
-        match controller.connect().await {
+        log::info!("Connecting to Wi-Fi \"{ssid}\"...");
+        match controller.connect_async().await {
             Ok(_) => log::info!("Wi-Fi connected!"),
             Err(e) => {
                 log::error!("Wi-Fi connection failed: {e:?}. Retrying in 5 seconds...");
