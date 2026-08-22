@@ -4,18 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-# Enables `#[derive(sqlx::Type)]` on the DB-facing enums (e.g.
-# `AnalysisJobStatus`) so the `server` crate can bind/decode them as native
-# Postgres enums. Off by default so the DB-less consumers (`camera-capture`,
-# `scraper`) don't pull in sqlx.
+
 sqlx = ["dep:sqlx"]
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
-uuid = { version = "1", features = ["serde"] }
 
-# Optional, feature-gated. Only the `derive` proc-macros + the Postgres type
-# info the derives' generated code references — no runtime, no `query!` macros,
-# so this stays light and picks no async runtime.
 sqlx = { version = "0.9", optional = true, default-features = false, features = ["postgres", "derive"] }
+uuid = { version = "1", features = ["serde"] }

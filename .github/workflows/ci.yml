@@ -67,7 +67,7 @@ jobs:
           tool: cargo-sort
 
       - name: Check Cargo.toml formatting
-        run: cargo sort --check
+        run: cargo sort --check --workspace
 
   cargo-machete:
     name: cargo-machete

@@ -4,13 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-api-types = { workspace = true }
 anyhow = "1"
+api-types = { workspace = true }
 chrono = "0.4"
 dotenvy = "0.15"
 ffmpeg-next = { version = "8", features = ["build"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 onvif = { git = "https://github.com/lumeohq/onvif-rs" }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "multipart"] }
 schema = { git = "https://github.com/lumeohq/onvif-rs", features = ["devicemgmt", "media", "ptz"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -21,5 +22,4 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] 
 toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "multipart"] }
 url = "2"

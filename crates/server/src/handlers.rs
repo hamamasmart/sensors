@@ -16,6 +16,8 @@ use api_types::{
     UpsertSensorResponse,
 };
 
+pub const KEY_TIME_FORMAT: &str = "%Y/%m/%d/%H/%M_%S";
+
 /// Shared state handed to every handler via axum's `State` extractor.
 #[derive(Clone)]
 pub struct AppState {
@@ -313,7 +315,7 @@ pub async fn upload_camera_image(
     let key = format!(
         "{}/{}.png",
         q.camera_id,
-        captured_at.format("%Y/%m/%d/%H/%M_%S"),
+        captured_at.format(KEY_TIME_FORMAT),
     );
 
     let mut prompts: Option<Vec<AnalysisPrompt>> = None;

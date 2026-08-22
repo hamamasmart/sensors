@@ -18,15 +18,14 @@
 //! — each uses `Bucket::list_page` one page at a time (never `Bucket::list`,
 //! which collects the whole history into a `Vec`).
 
-use std::sync::{Arc, Mutex};
-
+use async_stream::try_stream;
 use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
 };
 use chrono::{DateTime, NaiveDateTime, Utc};
-use futures::stream::{self, StreamExt};
+use futures::stream::TryStreamExt;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -36,7 +35,7 @@ use api_types::{
 };
 
 use super::{
-    ApiError, AppState, bad_request, err,
+    ApiError, AppState, KEY_TIME_FORMAT, bad_request, err,
     image_analysis::{AnalysisSummary, presign_image_url, run_analyses},
 };
 
@@ -45,10 +44,6 @@ use super::{
 /// in-flight OpenRouter calls at `BATCH_IMAGE_CONCURRENCY * 4`. Kept low for
 /// the 512 MB container and OpenRouter rate limits.
 const BATCH_IMAGE_CONCURRENCY: usize = 2;
-
-/// The S3 key-path timestamp format (see `upload_camera_image`):
-/// `<camera_id>/YYYY/MM/DD/HH/MM_SS.png`.
-const KEY_TIME_FORMAT: &str = "%Y/%m/%d/%H/%M_%S";
 
 /// One row of `batch_analysis_jobs`, decoded by the `query_as!` macro below
 /// (each field matched to a selected column by name — `FromRow` is not needed).
@@ -73,16 +68,6 @@ struct ListItem {
     camera_id: String,
     key: String,
     captured_at: DateTime<Utc>,
-}
-
-/// `unfold` state driving the paginated S3 listing across all requested cameras.
-struct ListState {
-    cameras: Vec<String>,
-    /// Index into `cameras` of the camera currently being listed.
-    cam_idx: usize,
-    /// S3 continuation token for `cameras[cam_idx]`; `None` means "start a new
-    /// camera" or "this camera is exhausted".
-    token: Option<String>,
 }
 
 // ── DB helpers ───────────────────────────────────────────────────────────────
@@ -253,69 +238,40 @@ fn parse_key(
 /// `list_page` fails (the stream then ends). Keys are never collected into a
 /// single `Vec` across the whole history, so peak memory is ~one page.
 ///
-/// Returned as a tuple so the count pass can `.count()` the stream and the
-/// process pass can `.map()` it — each pass calls this once (the cost of not
-/// materializing the listing is a second listing pass).
+/// Streams in-window images for every camera's S3 prefix, one `list_page` at a
+/// time (never materializing the full listing). A listing failure is yielded as
+/// a single `Err` and ends the stream (`?` inside `try_stream!` propagates it).
+///
+/// `Box::pin` because `try_stream!` builds a `!Unpin` async generator, and the
+/// combinators the worker uses (`try_fold`, `fold`, `buffer_unordered`) require
+/// `Self: Unpin` — `Pin<Box<_>>` is `Unpin`, so the call sites stay clean.
 fn stream_list_items(
     bucket: s3::Bucket,
     cameras: Vec<String>,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
-) -> (
-    impl futures::Stream<Item = ListItem>,
-    Arc<Mutex<Option<String>>>,
-) {
-    let list_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let list_error_inner = list_error.clone();
-
-    let items = stream::unfold(
-        ListState {
-            cameras,
-            cam_idx: 0,
-            token: None,
-        },
-        move |mut st| {
-            let bucket = bucket.clone();
-            let list_error = list_error_inner.clone();
-            async move {
-                if st.cam_idx >= st.cameras.len() {
-                    return None; // every camera listed
-                }
-                let cam = st.cameras[st.cam_idx].clone();
-                let prefix = format!("{cam}/");
-                match bucket
-                    .list_page(prefix, None, st.token.take(), None, None)
+) -> impl futures::Stream<Item = Result<ListItem, String>> {
+    Box::pin(try_stream! {
+        for cam in cameras {
+            let prefix = format!("{cam}/");
+            let mut token = None;
+            loop {
+                let (page, _) = bucket
+                    .list_page(prefix.clone(), None, token.take(), None, None)
                     .await
-                {
-                    Ok((page, _)) => {
-                        let page_items: Vec<ListItem> = page
-                            .contents
-                            .into_iter()
-                            .filter_map(|obj| parse_key(&cam, &obj.key, from, to))
-                            .collect();
-                        // Advance state: keep paging the current camera while a
-                        // continuation token exists, else move to the next camera.
-                        match page.next_continuation_token {
-                            Some(token) => st.token = Some(token),
-                            None => {
-                                st.cam_idx += 1;
-                                st.token = None;
-                            }
-                        }
-                        Some((page_items, st))
+                    .map_err(|e| format!("S3 list failed for camera {cam}: {e}"))?;
+                for obj in page.contents {
+                    if let Some(item) = parse_key(&cam, &obj.key, from, to) {
+                        yield item;
                     }
-                    Err(e) => {
-                        *list_error.lock().unwrap() =
-                            Some(format!("S3 list failed for camera {cam}: {e}"));
-                        None // end the stream; the error is surfaced via the cell
-                    }
+                }
+                token = page.next_continuation_token;
+                if token.is_none() {
+                    break;
                 }
             }
-        },
-    )
-    .flat_map(stream::iter);
-
-    (items, list_error)
+        }
+    })
 }
 
 // ── HTTP handlers ────────────────────────────────────────────────────────────
@@ -404,42 +360,40 @@ async fn run_batch_analysis(
 ) {
     let pool = state.pool.clone();
 
-    // Flip pending → running. If this fails the job stays `pending`; nothing
-    // more to do from the worker (the row remains visible to polling).
     if let Err(e) = set_job_running(&pool, job_id).await {
         tracing::warn!(%job_id, error = ?e, "failed to mark batch job running");
         return;
     }
 
-    // Phase 1 — count: stream the listing once, only to count in-window
-    // images. `.count()` consumes the stream without storing the keys, so peak
-    // memory is one S3 page. The up-front total makes progress meaningful from
-    // the first processed image.
-    let (count_stream, count_error) =
-        stream_list_items(state.s3.clone(), camera_ids.clone(), from, to);
-    let total: u64 = count_stream.count().await as u64;
-    // Take the error out of the cell into a local so the `MutexGuard` (a
-    // temporary in the `if let` condition) is dropped before the `.await` below
-    // — `std::sync::MutexGuard` is `!Send`, so it cannot live across an await.
-    let count_err = count_error.lock().unwrap().take();
-    if let Some(err) = count_err {
-        let _ = finish_job(&pool, job_id, AnalysisJobStatus::Failed, Some(&err)).await;
-        return;
-    }
-    // Best-effort: a failure to write the total is non-fatal (processing can
-    // still proceed; progress just reads the old total).
+    // Phase 1 — count in-window images. `try_fold` drains the stream without
+    // storing keys (peak memory: one S3 page), giving an up-front total that
+    // makes progress meaningful from the first processed image. A listing
+    // error short-circuits straight to a failed job.
+    let total = stream_list_items(state.s3.clone(), camera_ids.clone(), from, to)
+        .try_fold(0u64, |n, _item| async move { Ok(n + 1) })
+        .await;
+    let total = match total {
+        Ok(total) => total,
+        Err(err) => {
+            let _ = finish_job(&pool, job_id, AnalysisJobStatus::Failed, Some(&err)).await;
+            return;
+        }
+    };
+    // Best-effort: a failed total write is non-fatal; progress just reads the old value.
     if let Err(e) = set_total_images(&pool, job_id, total).await {
         tracing::warn!(%job_id, error = ?e, "failed to set total_images");
     }
 
-    // Phase 2 — process: stream the listing again, presign + infer each image,
-    // bounded to BATCH_IMAGE_CONCURRENCY in flight. Each completed image bumps
-    // the DB progress counters.
-    let (item_stream, proc_error) = stream_list_items(state.s3.clone(), camera_ids, from, to);
+    // Phase 2 — presign + infer each image, bounded to BATCH_IMAGE_CONCURRENCY.
+    // `try_for_each_concurrent` takes the async closure directly and returns
+    // `Result<(), String>`: `Ok` on a clean run, `Err` if the listing itself
+    // failed (the closure always returns `Ok`, so only the stream can error).
+    // It short-circuits on the first `Err`, dropping in-flight work — at most
+    // `BATCH_IMAGE_CONCURRENCY` (2) images, and the job is failing anyway.
     let api_key = state.openrouter_api_key.clone();
     let proc_state = state.clone();
-    item_stream
-        .map(move |item: ListItem| {
+    let proc_result = stream_list_items(state.s3.clone(), camera_ids, from, to)
+        .try_for_each_concurrent(BATCH_IMAGE_CONCURRENCY, |item| {
             let state = proc_state.clone();
             let api_key = api_key.clone();
             let prompts = prompts.clone();
@@ -456,10 +410,9 @@ async fn run_batch_analysis(
                         )
                         .await
                     }
+                    // Presigning is local (no S3 call), so failure is
+                    // exceptional; treat it as every prompt failing.
                     Err(e) => {
-                        // Presigning is a local computation (no S3 network
-                        // call), so a failure here is exceptional. Treat it as
-                        // all prompts for this image failing.
                         let failed = prompts.len();
                         tracing::warn!(key = %item.key, "presign failed: {}", e.1);
                         AnalysisSummary {
@@ -471,19 +424,16 @@ async fn run_batch_analysis(
                 if let Err(e) = record_image(&state.pool, job_id, &outcome).await {
                     tracing::warn!(%job_id, error = ?e, "failed to record image progress");
                 }
+                Ok(())
             }
         })
-        .buffer_unordered(BATCH_IMAGE_CONCURRENCY)
-        .for_each(|()| async {})
         .await;
 
-    // A mid-process listing failure aborts; otherwise the run is complete
-    // (including the zero-images-in-window case, which is a clean `completed`).
-    // Same `!Send`-guard note as the count pass: take into a local first.
-    let proc_err = proc_error.lock().unwrap().take();
-    let (status, error) = match proc_err {
-        Some(e) => (AnalysisJobStatus::Failed, Some(e)),
-        None => (AnalysisJobStatus::Completed, None),
+    // A mid-process listing failure fails the job; otherwise it's completed
+    // (including the zero-images case).
+    let (status, error) = match proc_result {
+        Err(e) => (AnalysisJobStatus::Failed, Some(e)),
+        Ok(()) => (AnalysisJobStatus::Completed, None),
     };
     if let Err(e) = finish_job(&pool, job_id, status, error.as_deref()).await {
         tracing::warn!(%job_id, error = ?e, "failed to finalize batch job");

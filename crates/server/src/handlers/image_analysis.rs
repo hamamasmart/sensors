@@ -149,7 +149,7 @@ pub(crate) async fn run_analyses(
     // `buffer_unordered` caps in-flight inferences at INFERENCE_CONCURRENCY
     // while still completing as fast as the model allows. The index is carried
     // through so results can be sorted back into input order before storage.
-    let results: Vec<(AnalysisPrompt, Result<(), anyhow::Error>)> = stream::iter(prompts)
+    let mut stream = stream::iter(prompts)
         .map(|prompt| {
             let image_url = image_url.clone();
             let key = key.to_string();
@@ -178,14 +178,24 @@ pub(crate) async fn run_analyses(
             }
             .map(|res: Result<(), anyhow::Error>| (prompt_cloned, res))
         })
-        .buffer_unordered(INFERENCE_CONCURRENCY)
-        .collect()
-        .await;
+        .buffer_unordered(INFERENCE_CONCURRENCY);
 
-    let mut succeeded = 0usize;
-    let mut failed = 0usize;
-    for (prompt, res) in &results {
-        match res {
+    let mut succeeded = 0;
+    let mut failed = 0;
+
+    while let Some((prompt, res)) = stream.next().await {
+        match &res {
+            Err(e) => {
+                tracing::warn!(
+                    prompt_id = %prompt.prompt_id,
+                    camera_id,
+                    prompt_id = %prompt.prompt_id,
+                    captured_at = %captured_at,
+                    error = ?e,
+                    "image analysis failed",
+                );
+                failed += 1;
+            }
             Ok(()) => {
                 tracing::info!(
                     prompt_id = %prompt.prompt_id,
@@ -193,18 +203,9 @@ pub(crate) async fn run_analyses(
                 );
                 succeeded += 1;
             }
-            Err(e) => {
-                tracing::warn!(
-                    prompt_id = %prompt.prompt_id,
-                    camera_id,
-                    captured_at = %captured_at,
-                    error = ?e,
-                    "image analysis failed",
-                );
-                failed += 1;
-            }
         }
     }
+
     AnalysisSummary { succeeded, failed }
 }
 

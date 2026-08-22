@@ -2629,6 +2629,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "api-types",
+ "async-stream",
  "axum",
  "chrono",
  "dotenvy",
