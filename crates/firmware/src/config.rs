@@ -1,3 +1,11 @@
+//! Firmware config types (runtime, borrowed `&'static` form).
+//!
+//! `build.rs` defines mirror `*Toml` structs (owned `String`/`Vec`) for deserializing `config.toml`
+//! and emits `DEFAULT_CONFIG` / `DEFAULT_SENSORS` `static`s into `OUT_DIR/config.rs` (included at the
+//! bottom). These runtime structs use `&'static str` / `&'static [u8]` so the whole config lives in
+//! `.rodata` with no heap allocation. The `&'static` string/byte fields cannot be deserialized from
+//! TOML, hence the separate owned mirror types in `build.rs`.
+
 /// Global firmware configuration.
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -17,12 +25,31 @@ pub struct WifiConfig {
     pub password: &'static str,
 }
 
+/// Transport security for the telemetry link to the backend server.
+///
+/// The `Psk` variant carries the identity and pre-shared key inline, so `ServerConfig` holds a
+/// single `tls` field rather than scattered optional PSK fields.
+#[derive(Clone, Copy, Debug)]
+pub enum TlsConfig {
+    /// Plain HTTP.
+    None,
+    /// HTTPS with TLS-PSK (pre-shared key).
+    Psk {
+        /// PSK identity offered to the server during the TLS handshake (UTF-8 bytes).
+        identity: &'static [u8],
+        /// Pre-shared key (raw bytes, hex-decoded at build time from `config.toml`).
+        psk: &'static [u8],
+    },
+}
+
 /// Remote backend server settings.
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
     pub host: &'static str,
     pub port: u16,
     pub auth_token: &'static str,
+    /// Transport security (plain HTTP vs. TLS-PSK).
+    pub tls: TlsConfig,
 }
 
 /// Modbus RS485 UART bus configuration.

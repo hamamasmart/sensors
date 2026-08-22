@@ -15,6 +15,14 @@ host = "10.100.102.19"
 port = 8080
 auth_token = "testing"
 
+# Transport security for the telemetry link:
+#   type = "none" = plain HTTP (default)
+#   type = "psk"  = HTTPS with TLS-PSK (requires identity + psk; set port to the TLS port, e.g. 8443)
+[server.tls]
+type = "none"
+# identity = "esp32-001"
+# psk = "a1b2c3d4e5f6"   # hex-encoded pre-shared key
+
 [modbus]
 baud_rate = 9600
 timeout_ms = 1000
@@ -25,8 +33,18 @@ turnaround_delay_ms = 5
 external_id = "room-lux"
 category = "light_intensity"
 measurement_unit = "lx"
-slave_address = 1
+slave_address = 2
 function = "ReadHoldingRegisters"
 register_address = 8
+register_count = 1
+scaling = { type = "Raw" }
+
+[[sensors]]
+external_id = "room-par"
+category = "light_intensity"
+measurement_unit = "PPFD"
+slave_address = 1
+function = "ReadHoldingRegisters"
+register_address = 0
 register_count = 1
 scaling = { type = "Raw" }

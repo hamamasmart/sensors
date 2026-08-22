@@ -3,14 +3,10 @@ extern crate alloc;
 use alloc::{format, string::ToString, vec::Vec};
 use embassy_net::tcp::client::{TcpClientState, TcpConnection};
 use embassy_time::{Duration, with_timeout};
-use reqwless::{
-    client::HttpResource,
-    headers::ContentType,
-    request::RequestBuilder,
-};
+use reqwless::{client::HttpResource, headers::ContentType, request::RequestBuilder};
 use uuid::Uuid;
 
-use crate::config::SensorDefinition;
+use crate::config::{SensorDefinition, TlsConfig};
 use api_types::{
     InsertMeasurementsRequest, InsertMeasurementsResponse, ResponseType, UpsertSensorRequest,
     UpsertSensorResponse,
@@ -39,6 +35,7 @@ pub struct TelemetryHttpClient {
     port: u16,
     auth_token: &'static str,
     provider: &'static str,
+    tls: TlsConfig,
 }
 
 #[derive(Debug)]
@@ -56,18 +53,33 @@ pub enum HttpError {
 }
 
 impl TelemetryHttpClient {
-    pub fn new(host: &'static str, port: u16, auth_token: &'static str, provider: &'static str) -> Self {
+    pub fn new(
+        host: &'static str,
+        port: u16,
+        auth_token: &'static str,
+        provider: &'static str,
+        tls: TlsConfig,
+    ) -> Self {
         Self {
             host,
             port,
             auth_token,
             provider,
+            tls,
         }
     }
 
-    /// The base URL (`http://host:port`) for establishing a persistent keep-alive resource.
+    /// The base URL for establishing a persistent keep-alive resource.
+    ///
+    /// The scheme drives reqwless' transport: `https://` triggers a TLS handshake inside
+    /// `HttpClient::resource` (the client must have been built with `new_with_tls`), while
+    /// `http://` uses a plain TCP connection.
     pub fn base_url(&self) -> alloc::string::String {
-        format!("http://{}:{}", self.host, self.port)
+        let scheme = match self.tls {
+            TlsConfig::Psk { .. } => "https",
+            TlsConfig::None => "http",
+        };
+        format!("{scheme}://{}:{}", self.host, self.port)
     }
 
     /// Upsert a sensor registration on the server, returning its unique `sensor_id`.
@@ -163,12 +175,10 @@ impl TelemetryHttpClient {
             Ok(out_buf[..n].to_vec())
         };
 
-        with_timeout(REQUEST_DEADLINE, request)
-            .await
-            .map_err(|_| {
-                log::warn!("HTTP {path} timed out after {REQUEST_DEADLINE:?}; reconnecting");
-                HttpError::Timeout
-            })?
+        with_timeout(REQUEST_DEADLINE, request).await.map_err(|_| {
+            log::warn!("HTTP {path} timed out after {REQUEST_DEADLINE:?}; reconnecting");
+            HttpError::Timeout
+        })?
     }
 }
 
@@ -179,8 +189,9 @@ fn map_send_error(path: &str) -> impl FnOnce(reqwless::Error) -> HttpError + '_ 
     move |e| {
         log::warn!("HTTP send to {path} failed: {e:?}");
         match e {
-            reqwless::Error::ConnectionAborted
-            | reqwless::Error::Network(_) => HttpError::ConnectionDead,
+            reqwless::Error::ConnectionAborted | reqwless::Error::Network(_) => {
+                HttpError::ConnectionDead
+            }
             _ => HttpError::RequestFailed,
         }
     }
@@ -194,4 +205,37 @@ pub fn make_tcp_client_state() -> &'static TcpClientState<POOL_SIZE, TCP_TX_SZ, 
     static STATE: static_cell::StaticCell<TcpClientState<POOL_SIZE, TCP_TX_SZ, TCP_RX_SZ>> =
         static_cell::StaticCell::new();
     STATE.init(TcpClientState::new())
+}
+
+/// Capacity of the embedded-tls record-layer buffers.
+///
+/// embedded-tls frames up to a full TLS record (max 16384 bytes, see embedded-tls `lib.rs`);
+/// smaller buffers risk failure on large server records. The pair costs 32 KB of BSS (not heap
+/// — the device heap is only 72 KB), allocated once for program duration via `static_cell`.
+const TLS_BUF_SZ: usize = 16384;
+
+/// Seed for embedded-tls' ChaCha8 RNG, which drives the TLS handshake `client_random`.
+///
+/// In TLS-PSK mode the session key is derived from the pre-shared key, not from this RNG, so a
+/// fixed seed is acceptable. Wiring the esp-hal hardware RNG for per-boot randomness is a future
+/// improvement; for now a compile-time constant keeps the construction infallible and `const`-friendly.
+const TLS_SEED: u64 = 0xA5_E5_F1_2C_9D_4B_77_01;
+
+/// Build a reqwless `TlsConfig` for TLS-PSK, allocating the `'static` record buffers it borrows.
+///
+/// Call once at startup (when `TlsConfig::Psk` is selected) and pass the result to
+/// `HttpClient::new_with_tls`. The identity and psk come from `DEFAULT_CONFIG.server.tls`
+/// (`TlsConfig::Psk { identity, psk }`), build-time hex-decoded, so they are `'static`.
+pub fn make_tls_config(
+    identity: &'static [u8],
+    psk: &'static [u8],
+) -> reqwless::client::TlsConfig<'static> {
+    static READ_BUF: static_cell::StaticCell<[u8; TLS_BUF_SZ]> = static_cell::StaticCell::new();
+    static WRITE_BUF: static_cell::StaticCell<[u8; TLS_BUF_SZ]> = static_cell::StaticCell::new();
+    reqwless::client::TlsConfig::new(
+        TLS_SEED,
+        READ_BUF.init([0u8; TLS_BUF_SZ]),
+        WRITE_BUF.init([0u8; TLS_BUF_SZ]),
+        reqwless::client::TlsVerify::Psk { identity, psk },
+    )
 }

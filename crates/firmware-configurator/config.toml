@@ -17,7 +17,7 @@ baud_rate = 4800
 
 # Desired (output) communication parameters to program into the sensor.
 [output]
-slave_id = 2
+slave_id = 1
 baud_rate = 9600
 
 [modbus]

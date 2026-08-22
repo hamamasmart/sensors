@@ -21,8 +21,10 @@ use uuid::Uuid;
 
 use api_types::{InsertMeasurementsRequest, Measurement};
 use firmware::{
-    config::{DEFAULT_CONFIG, DEFAULT_SENSORS},
-    http_client::{HttpError, HttpResourceConn, TelemetryHttpClient, make_tcp_client_state},
+    config::{DEFAULT_CONFIG, DEFAULT_SENSORS, TlsConfig},
+    http_client::{
+        HttpError, HttpResourceConn, TelemetryHttpClient, make_tcp_client_state, make_tls_config,
+    },
     modbus::ModbusMaster,
     sensors::SensorManager,
     sntp::SyncedClock,
@@ -94,13 +96,21 @@ async fn main(spawner: Spawner) -> ! {
     let dns = DnsSocket::new(*stack);
     // Live reqwless HttpClient — borrowed by the persistent keep-alive resource below. Kept in
     // `main` (not inside `TelemetryHttpClient`) so the resource can borrow it across the loop
-    // without a self-referential struct.
-    let mut http_client = HttpClient::new(&tcp_client, &dns);
+    // without a self-referential struct. When TLS-PSK is configured the client is built with
+    // `new_with_tls`; reqwless then performs the TLS handshake transparently inside `resource()`
+    // because `base_url()` returns an `https://` URL.
+    let mut http_client = match DEFAULT_CONFIG.server.tls {
+        TlsConfig::Psk { identity, psk } => {
+            HttpClient::new_with_tls(&tcp_client, &dns, make_tls_config(identity, psk))
+        }
+        TlsConfig::None => HttpClient::new(&tcp_client, &dns),
+    };
     let telemetry = TelemetryHttpClient::new(
         DEFAULT_CONFIG.server.host,
         DEFAULT_CONFIG.server.port,
         DEFAULT_CONFIG.server.auth_token,
         DEFAULT_CONFIG.provider,
+        DEFAULT_CONFIG.server.tls,
     );
 
     let mut sensor_manager = SensorManager::new(DEFAULT_SENSORS);
@@ -183,7 +193,10 @@ async fn main(spawner: Spawner) -> ! {
                 if sensor.server_sensor_id.is_some() {
                     continue;
                 }
-                match telemetry.upsert_sensor(&mut resource, sensor.definition).await {
+                match telemetry
+                    .upsert_sensor(&mut resource, sensor.definition)
+                    .await
+                {
                     Ok(res) => {
                         sensor.server_sensor_id = Some(res.sensor_id);
                         log::info!(
