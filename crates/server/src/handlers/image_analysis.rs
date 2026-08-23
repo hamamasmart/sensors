@@ -34,7 +34,7 @@ const PRESIGN_EXPIRY_SECS: u32 = 3600;
 
 /// Number of inference attempts per prompt when the model returns an HTTP error
 /// or content that does not parse to a usable value.
-const MAX_TRIES: u8 = 3;
+const MAX_TRIES: u8 = 50;
 
 /// Path appended to the configured OpenRouter base URL for chat completions.
 const CHAT_COMPLETIONS_PATH: &str = "/chat/completions";
