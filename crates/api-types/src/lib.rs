@@ -1,10 +1,5 @@
 //! request/response contract for the `server`.
 
-#![cfg_attr(not(feature = "std"), no_std)]
-
-extern crate alloc;
-
-use alloc::{string::String, vec::Vec};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

@@ -1,13 +1,7 @@
 [workspace]
 members = ["crates/*"]
-default-members = [
-    "crates/api-types",
-    "crates/camera-capture",
-    "crates/scraper",
-    "crates/server",
-]
 resolver = "3"
 
 [workspace.dependencies]
 # Shared internal contract
-api-types = { path = "crates/api-types", default-features = false }
+api-types = { path = "crates/api-types" }
