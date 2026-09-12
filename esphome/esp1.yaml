@@ -1,0 +1,154 @@
+# Board: Waveshare ESP32-S3-RS485-CAN
+#
+# RS485 telemetry: polls two Modbus-RTU light sensors over the bus and pushes
+# the readings to the `crates/server` API (`POST /readings`, bearer auth).
+#
+#   room-lux   slave 2, holding register 8  (1 register), unit lx,   Raw
+#   room-par   slave 1, holding register 0  (1 register), unit PPFD, Raw
+#
+# Board RS485 wiring: TXD GPIO17 / RXD GPIO18 on UART1, DE/RE direction pin on
+# GPIO21 (HIGH = transmit). `flow_control_pin` below makes ESPHome toggle it
+# around every transmission. 9600 baud, 8N1.
+#
+# See docs/esphome-telemetry.md for the server contract and docs/
+# rs485-sensor-addressing.md for how the sensors' slave addresses/baud are set.
+
+substitutions:
+  # Host running crates/server — must be reachable from the device's LAN.
+  server_url: "http://10.100.102.19:8080"
+  # The server's AUTH_TOKEN (see .env / crates/server configuration).
+  auth_token: "testing"
+  # Provider tag the sensors are stored under. The server keys sensors by
+  # (external_id, provider).
+  provider: "rs485-esp32s3"
+  # Register poll cadence (each modbus_controller) and upload cadence (interval).
+  poll_interval: 10s
+
+esphome:
+  name: esp1
+  friendly_name: Esp1
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: "..."
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: "..."
+  password: "..."
+
+# ── RS485 Modbus RTU ────────────────────────────────────────────────────────
+
+uart:
+  id: rs485_uart
+  tx_pin: GPIO17
+  rx_pin: GPIO18
+  baud_rate: 9600
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+
+modbus:
+  id: mod_bus
+  uart_id: rs485_uart
+  # DE/RE of the isolated transceiver. HIGH = transmit, LOW = receive.
+  # Without this the transceiver stays in receive mode and transmitted bytes
+  # never reach the bus — the sensor never sees the request, and every read
+  # times out.
+  flow_control_pin: GPIO21
+
+# One controller per slave address; both share the modbus hub, which
+# serializes bus access. ESPHome times responses out on UART idle/silence
+# (baud-adaptive) and retries each command `max_cmd_retries` (default 4)
+# times, so no fixed response timeout is configured.
+modbus_controller:
+  - id: lux_controller
+    address: 0x02
+    modbus_id: mod_bus
+    update_interval: ${poll_interval}
+
+  - id: par_controller
+    address: 0x01
+    modbus_id: mod_bus
+    update_interval: ${poll_interval}
+
+sensor:
+  - platform: modbus_controller
+    modbus_controller_id: lux_controller
+    id: room_lux
+    name: "Room Lux"
+    register_type: holding
+    address: 8
+    value_type: U_WORD
+    unit_of_measurement: "lx"
+
+  - platform: modbus_controller
+    modbus_controller_id: par_controller
+    id: room_par
+    name: "Room PAR"
+    register_type: holding
+    address: 0
+    value_type: U_WORD
+    unit_of_measurement: "PPFD"
+
+# ── Telemetry upload ────────────────────────────────────────────────────────
+#
+# SNTP-synced time stamps each reading (the server dedups on
+# (sensor_id, measured_at), so readings are only posted once time is valid —
+# never with the pre-sync 1970 clock).
+
+time:
+  - platform: sntp
+    id: sntp_time
+
+http_request:
+  timeout: 5s
+
+interval:
+  - interval: ${poll_interval}
+    then:
+      - if:
+          # Skip until NTP is synced and at least one sensor has a reading.
+          condition:
+            lambda: |-
+              return id(sntp_time).now().is_valid()
+                  && (!isnan(id(room_lux).state) || !isnan(id(room_par).state));
+          then:
+            - http_request.post:
+                url: "${server_url}/readings"
+                request_headers:
+                  Content-Type: application/json
+                  Authorization: "Bearer ${auth_token}"
+                # ArduinoJson lambda so `value` is sent as a JSON number (the
+                # mapping syntax would send strings, which the server stores as
+                # text). v7 syntax (`.to<JsonArray>()`); on ArduinoJson v6
+                # builds (ESPHome < 2024.2) use root.createNestedArray("readings").
+                json: |-
+                  root["provider"] = "${provider}";
+                  std::string ts = id(sntp_time).utcnow().strftime("%Y-%m-%dT%H:%M:%SZ");
+                  JsonArray readings = root["readings"].to<JsonArray>();
+                  if (!isnan(id(room_lux).state)) {
+                    JsonObject r = readings.add<JsonObject>();
+                    r["external_id"] = "room-lux";
+                    r["category"] = "light_intensity";
+                    r["measurement_unit"] = "lx";
+                    r["value"] = id(room_lux).state;
+                    r["measured_at"] = ts;
+                  }
+                  if (!isnan(id(room_par).state)) {
+                    JsonObject r = readings.add<JsonObject>();
+                    r["external_id"] = "room-par";
+                    r["category"] = "light_intensity";
+                    r["measurement_unit"] = "PPFD";
+                    r["value"] = id(room_par).state;
+                    r["measured_at"] = ts;
+                  }

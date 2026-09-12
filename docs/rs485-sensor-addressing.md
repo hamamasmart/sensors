@@ -1,8 +1,7 @@
 # RS485 Sensor Addressing (Modbus-RTU)
 
 How to read and update (reprogram) the **slave address** (and baud rate) of each RS485 sensor used
-by the fleet, over Modbus-RTU. This was previously implemented by the removed
-`firmware-configurator` ESP32-S3 firmware crate; the protocol knowledge lives on here.
+by the fleet, over Modbus-RTU.
 
 All sensors are Modbus-RTU slaves on RS485, configured through **holding registers**:
 
@@ -59,18 +58,10 @@ settings), the sequence is:
 4. On failure to write at all: check wiring/power and that the sensor is really at the assumed
    input slave id and baud rate.
 
-Timing parameters that worked in practice: Modbus response timeout 1000 ms, turnaround delay 5 ms,
-UART 8N1.
+Timing parameters to use: Modbus response timeout 1000 ms, turnaround delay 5 ms, UART 8N1.
 
-## Bus hardware (ESP32-S3, Waveshare ESP32-S3-Relay-6CH)
+## Bus hardware
 
-The RS485 UART used by the ESP32-S3 board:
-
-| Function        | GPIO    |
-| :---            | :---    |
-| RS485 TXD       | `GPIO17` |
-| RS485 RXD       | `GPIO18` |
-| RS485 direction | automatic (hardware transceiver, no GPIO) |
-
-The ESP32 side acted as the Modbus **master**: a plain UART master with CRC16 framing, no
-`DE`/`RE` direction GPIO — the Waveshare board handles transmit direction automatically.
+The bus is driven from the ESP32-S3 master described in
+[esphome-telemetry.md](esphome-telemetry.md) — see that document for the UART pins and the RS485
+direction handling.

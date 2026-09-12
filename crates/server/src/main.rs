@@ -77,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
     // at the app layer.
     let api = Router::new()
         .route("/sensors", post(handlers::upsert_sensor))
+        .route("/readings", post(handlers::insert_readings))
         .route(
             "/sensors/{sensor_id}/measurements",
             post(handlers::insert_measurements),
