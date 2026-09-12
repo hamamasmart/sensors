@@ -18,6 +18,8 @@ use api_types::{
     UpsertSensorRequest, UpsertSensorResponse,
 };
 
+pub const KEY_TIME_FORMAT: &str = "%Y/%m/%d/%H/%M_%S";
+
 /// Shared state handed to every handler via axum's `State` extractor.
 #[derive(Clone)]
 pub struct AppState {
@@ -227,9 +229,11 @@ async fn insert_measurements_db(
     Ok(inserted)
 }
 
+mod batch_analysis;
 mod image_analysis;
 mod topco;
 
+pub use batch_analysis::{get_batch_analysis_progress, start_batch_analysis};
 pub use topco::topco_webhook;
 
 // ── HTTP handlers ───────────────────────────────────────────────────────────
@@ -364,7 +368,7 @@ pub async fn upload_camera_image(
     let key = format!(
         "{}/{}.png",
         q.camera_id,
-        captured_at.format("%Y/%m/%d/%H/%M_%S"),
+        captured_at.format(KEY_TIME_FORMAT),
     );
 
     let mut prompts: Option<Vec<AnalysisPrompt>> = None;

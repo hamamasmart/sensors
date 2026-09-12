@@ -90,6 +90,15 @@ async fn main() -> anyhow::Result<()> {
             "/cameras/images",
             post(handlers::upload_camera_image).layer(DefaultBodyLimit::max(MAX_IMAGE_BODY_BYTES)),
         )
+        // Offline batch analysis: run a set of prompts over every image already
+        // stored in S3 for the given cameras within a time window. Returns a
+        // job id immediately; poll the progress route. Mirrors the on-the-fly
+        // inference path but operates over captured history.
+        .route("/cameras/analyze", post(handlers::start_batch_analysis))
+        .route(
+            "/cameras/analyze/{job_id}",
+            get(handlers::get_batch_analysis_progress),
+        )
         .route("/webhooks/topco", post(handlers::topco_webhook))
         .layer(from_fn_with_state(
             auth::ExpectedToken(config.auth_token),

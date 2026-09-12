@@ -5,7 +5,8 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-api-types = { workspace = true }
+api-types = { workspace = true, features = ["sqlx"] }
+async-stream = "0.3"
 axum = { version = "0.8", features = ["multipart"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
@@ -19,4 +20,4 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", 
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["serde"] }
+uuid = { version = "1", features = ["serde", "v4"] }

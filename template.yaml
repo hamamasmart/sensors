@@ -17,8 +17,8 @@
 # Lightsail containers can't assume IAM roles, so the server gets long-lived S3
 # credentials as env vars. To avoid a manual IAM step, the template itself
 # provisions a dedicated IAM user (S3UploaderUser) with an inline policy scoped
-# to s3:CreateBucket + s3:PutObject + s3:AbortMultipartUpload on the
-# camera-images bucket, plus an access key (S3UploaderKey) whose id/secret are
+# to s3:ListBucket + s3:CreateBucket + s3:PutObject + s3:AbortMultipartUpload on
+# the camera-images bucket, plus an access key (S3UploaderKey) whose id/secret are
 # wired straight into the container environment. Rotate by bumping
 # S3UploaderKey.Serial — CloudFormation replaces the key and redeploys the
 # server with the new secret. (s3:PutObject covers CreateMultipartUpload /
@@ -91,6 +91,7 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
+                  - s3:ListBucket
                   - s3:CreateBucket
                   - s3:PutObject
                   - s3:GetObject

@@ -132,6 +132,75 @@ pub struct UploadCameraImageResponse {
     pub key: String,
 }
 
+/// `POST /cameras/analyze` — kick off offline analysis of every image already
+/// stored in S3 for the given cameras within `[from, to]`.
+///
+/// Unlike the on-the-fly flow attached to `POST /cameras/images`, this is a
+/// batch backfill: it re-analyzes images already captured into S3 using the
+/// supplied prompts and stores results in the same `{camera_id}_{prompt_id}`
+/// sensors. The server cannot reach the LAN cameras, so no new captures are
+/// triggered — only already-stored images are processed.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AnalyzeCamerasRequest {
+    pub camera_ids: Vec<String>,
+    pub from: DateTime<Utc>,
+    pub to: DateTime<Utc>,
+    pub prompts: Vec<AnalysisPrompt>,
+}
+
+/// `POST /cameras/analyze` response — the id of the background job. Poll
+/// `GET /cameras/analyze/{job_id}` for progress.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AnalyzeCamerasResponse {
+    pub job_id: Uuid,
+}
+
+/// Lifecycle of a batch analysis job. `Failed` means a job-level error (e.g. an
+/// S3 listing failure) aborted the run; per-image / per-prompt failures are
+/// reported in the progress counts, not the status.
+///
+/// When the `sqlx` feature is enabled (by the `server` crate), this derives
+/// `sqlx::Type` and maps 1:1 onto the native Postgres enum `batch_job_status`
+/// — variants are renamed to the same snake_case labels the migration declares,
+/// so the enum binds and decodes directly with no string bridge. The serde
+/// representation is the same snake_case, keeping the DB and JSON in sync.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "sqlx",
+    derive(sqlx::Type),
+    sqlx(type_name = "batch_job_status", rename_all = "snake_case")
+)]
+pub enum AnalysisJobStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+}
+
+/// `GET /cameras/analyze/{job_id}` response.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AnalysisJobProgressResponse {
+    pub job_id: Uuid,
+    pub status: AnalysisJobStatus,
+    /// Images discovered across all cameras so far. Grows as the S3 listing
+    /// progresses and converges to the final total once listing of every camera
+    /// is exhausted (the worker streams pages, it does not pre-count).
+    pub total_images: u64,
+    /// Images whose analysis has finished (success or per-prompt failure).
+    pub processed_images: u64,
+    /// Images where at least one prompt failed.
+    pub failed_images: u64,
+    /// Prompt-level successes across all processed images.
+    pub succeeded: u64,
+    /// Prompt-level failures across all processed images.
+    pub failed: u64,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    /// Populated only when `status == Failed` (job-level error message).
+    pub error: Option<String>,
+}
+
 /// A vision-LLM prompt to run against an uploaded camera image. Sent as the
 /// `prompts` multipart part (a JSON array of these) on `POST /cameras/images`.
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -3,7 +3,13 @@ name = "api-types"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+
+sqlx = ["dep:sqlx"]
+
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
+
+sqlx = { version = "0.9", optional = true, default-features = false, features = ["postgres", "derive"] }
 uuid = { version = "1", features = ["serde"] }
