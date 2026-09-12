@@ -75,6 +75,45 @@ pub struct InsertMeasurementsResponse {
     pub inserted: u64,
 }
 
+/// A single reading posted by a device that identifies its sensor by
+/// `(external_id, provider)` instead of the server-assigned internal UUID. The
+/// server upserts the sensor and stores the measurement in one step, so simple
+/// devices (ESPHome) need only one endpoint.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Reading {
+    /// The device-local sensor identity, unique within the provider.
+    pub external_id: String,
+    /// Sensor category, stored on `sensors.category`. Optional — a reading
+    /// without category metadata stores `NULL`.
+    pub category: Option<String>,
+    /// Display unit, stored on `sensors.measurement_unit`.
+    pub measurement_unit: Option<String>,
+    /// Measurement depth, stored on `sensors.depth_value`.
+    pub depth_value: Option<f64>,
+    /// Depth unit, stored on `sensors.depth_unit`.
+    pub depth_unit: Option<String>,
+    /// The reading itself: a number (`measurements.value`) or short text
+    /// (`measurements.value_text`), same untagged wire shape as
+    /// `POST /sensors/:sensor_id/measurements`.
+    pub value: MeasurementValue,
+    /// When the reading was taken.
+    pub measured_at: DateTime<Utc>,
+    /// Pins the sensor to numeric or text values on first sight, exactly like
+    /// `POST /sensors`. Once the sensor exists a different type is rejected
+    /// with `409 Conflict`. Defaults to `numeric`.
+    #[serde(default)]
+    pub value_type: ResponseType,
+}
+
+/// `POST /readings` body — a batch of readings, all from one provider.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct InsertReadingsRequest {
+    /// The provider every reading in this batch belongs to. One device speaks
+    /// for one provider, so it is stated once rather than repeated per reading.
+    pub provider: String,
+    pub readings: Vec<Reading>,
+}
+
 /// `POST /cameras/images` request query parms.
 #[derive(Deserialize)]
 pub struct UploadCameraImageQuery {

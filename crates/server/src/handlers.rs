@@ -1,5 +1,7 @@
 //! HTTP route handlers. All DB writes live here so the scraper can stay DB-less.
 
+use std::collections::HashMap;
+
 use axum::{
     Json,
     extract::{Multipart, Path, Query, State},
@@ -11,9 +13,9 @@ use sqlx::{PgPool, QueryBuilder};
 use uuid::Uuid;
 
 use api_types::{
-    AnalysisPrompt, InsertMeasurementsRequest, InsertMeasurementsResponse, Measurement,
-    ResponseType, UploadCameraImageQuery, UploadCameraImageResponse, UpsertSensorRequest,
-    UpsertSensorResponse,
+    AnalysisPrompt, InsertMeasurementsRequest, InsertMeasurementsResponse, InsertReadingsRequest,
+    Measurement, Reading, ResponseType, UploadCameraImageQuery, UploadCameraImageResponse,
+    UpsertSensorRequest, UpsertSensorResponse,
 };
 
 /// Shared state handed to every handler via axum's `State` extractor.
@@ -276,6 +278,57 @@ pub async fn insert_measurements(
     Json(body): Json<InsertMeasurementsRequest>,
 ) -> Result<Json<InsertMeasurementsResponse>, ApiError> {
     let inserted = insert_measurements_db(&state.pool, sensor_id, &body.measurements).await?;
+    Ok(Json(InsertMeasurementsResponse { inserted }))
+}
+
+/// `POST /readings` — one-shot device upload: each reading is tagged with its
+/// sensor's `(external_id, provider)` identity plus category/unit metadata, and
+/// the server upserts the sensor and inserts the measurement in the same
+/// request. Devices that cannot do the two-step `/sensors` →
+/// `/sensors/:sensor_id/measurements` handshake (ESPHome) only need this
+/// endpoint.
+///
+/// Readings are grouped by `external_id` so each sensor is upserted once and
+/// its measurements go in as one batch — the same shape the Topco webhook
+/// uses. Both writes reuse [`upsert_sensor_db`] / [`insert_measurements_db`],
+/// so no new SQL lives here. When the same `external_id` appears twice in one
+/// batch, the first reading's metadata wins the upsert.
+pub async fn insert_readings(
+    State(state): State<AppState>,
+    Json(req): Json<InsertReadingsRequest>,
+) -> Result<Json<InsertMeasurementsResponse>, ApiError> {
+    let mut groups: HashMap<String, (Reading, Vec<Measurement>)> = HashMap::new();
+    for reading in req.readings {
+        let measurement = Measurement {
+            value: reading.value.clone(),
+            measured_at: reading.measured_at,
+        };
+        groups
+            .entry(reading.external_id.clone())
+            .or_insert_with(|| (reading, Vec::new()))
+            .1
+            .push(measurement);
+    }
+
+    // A device post carries only a handful of readings, so the per-sensor
+    // upsert + insert round trips reuse the shared helpers as-is rather than
+    // being combined into one statement.
+    let mut inserted: u64 = 0;
+    for (external_id, (sensor, measurements)) in groups {
+        let sensor_id = upsert_sensor_db(
+            &state.pool,
+            &external_id,
+            &req.provider,
+            sensor.category.as_deref(),
+            sensor.measurement_unit.as_deref(),
+            sensor.depth_value,
+            sensor.depth_unit.as_deref(),
+            sensor.value_type.as_db_str(),
+        )
+        .await?;
+        inserted += insert_measurements_db(&state.pool, sensor_id, &measurements).await?;
+    }
+
     Ok(Json(InsertMeasurementsResponse { inserted }))
 }
 
